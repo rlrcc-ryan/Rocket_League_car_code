@@ -55,3 +55,8 @@ ui_*.h
 
 # Vagrant stuff
 .vagrant
+
+# PlatformIO
+.pio/
+managed_components/
+sdkconfig.esp32dev
