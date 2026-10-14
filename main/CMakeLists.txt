@@ -1,6 +1,7 @@
 set(srcs
         "main.c"
-        "sketch.cpp")
+        "Bluetooth_handler.cpp"
+        "servos_and_motors_handler.cpp")
 
 set(requires "bluepad32" "bluepad32_arduino" "arduino" "btstack")
 

@@ -1,0 +1,89 @@
+#include <stdio.h>
+#include <stdint.h>
+
+#include "driver/ledc.h"
+#include "esp_err.h"
+
+#define SERVO_GPIO_SWIVEL 13
+#define SERVO_GPIO_STEERING 14
+
+#define SERVO_MIN_US 1000
+#define SERVO_CENTER_US 1500
+#define SERVO_MAX_US 2000
+
+static void servo_set_pulse(uint32_t pulse_us)
+{
+    // 50 Hz = 20.000 us periode
+    // 16-bit PWM = 65535 stappen
+    uint32_t duty =
+        (pulse_us * 65535UL) / 20000UL;
+
+    ESP_ERROR_CHECK(
+        ledc_set_duty(
+            LEDC_LOW_SPEED_MODE,
+            LEDC_CHANNEL_0,
+            duty
+        )
+    );
+
+    ESP_ERROR_CHECK(
+        ledc_update_duty(
+            LEDC_LOW_SPEED_MODE,
+            LEDC_CHANNEL_0
+        )
+    );
+}
+
+static void servo_init(void)
+{
+    // 50 Hz servo PWM
+    ledc_timer_config_t timer_config = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .duty_resolution = LEDC_TIMER_16_BIT,
+        .freq_hz = 50,
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+
+    ESP_ERROR_CHECK(
+        ledc_timer_config(&timer_config)
+    );
+
+    // GPIO14 als PWM uitgang
+    ledc_channel_config_t channel_config = {
+        .gpio_num = SERVO_GPIO_STEERING,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 0,
+        .hpoint = 0
+    };
+
+    ESP_ERROR_CHECK(
+        ledc_channel_config(&channel_config)
+    );
+}
+
+void app_main(void)
+{
+    printf("\n");
+    printf("============================\n");
+    printf("     SERVO TEST ESP32\n");
+    printf("============================\n");
+
+    printf("GPIO: %d\n", SERVO_GPIO_STEERING);
+    printf("PWM: 50 Hz\n");
+
+    servo_init();
+
+    printf("Servo naar middenpositie...\n");
+
+    servo_set_pulse(SERVO_CENTER_US);
+
+    printf("1500 us actief.\n");
+
+    while (1) {
+        // Servo blijft op 1500 us staan
+    }
+}
