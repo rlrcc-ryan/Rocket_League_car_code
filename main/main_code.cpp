@@ -76,7 +76,7 @@ void processGamepad(ControllerPtr ctl) {
     // There are different ways to query whether a button is pressed.
     // By query each button individually:
     //  a(), b(), x(), y(), l1(), etc...
-    servo_set_pulse(1, axisToPulse(ctl->axisX()));
+    servo_set_pulse(0, axisToPulse(ctl->axisX()));
 
 
     if (ctl->a()) {

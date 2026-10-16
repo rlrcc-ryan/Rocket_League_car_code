@@ -26,7 +26,7 @@
  
 // Pas deze GPIO's aan naar jouw bedrading (servo 0 t/m 5)
 static const int servo_gpio[SERVO_COUNT] = {
-    14, 15, 16, 17, 18, 19
+    13, 14, 16, 17, 18, 19
 };
  
 // Elke servo krijgt een eigen LEDC-kanaal, alle servo's delen 1 timer
