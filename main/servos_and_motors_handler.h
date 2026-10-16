@@ -1,0 +1,19 @@
+#pragma once
+ 
+#include <stdint.h>
+ 
+#define SERVO_MIN_US     1000
+#define SERVO_CENTER_US  1500
+#define SERVO_MAX_US     2000
+ 
+#ifdef __cplusplus
+extern "C" {
+#endif
+ 
+void servo_init(void);
+void servo_set_pulse(uint8_t servo, uint32_t pulse_us);
+uint32_t axisToPulse(int axis);
+ 
+#ifdef __cplusplus
+}
+#endif

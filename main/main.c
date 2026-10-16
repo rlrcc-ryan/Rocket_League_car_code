@@ -15,15 +15,22 @@
 #include <arduino_platform.h>
 #include <uni.h>
 
+//Servo
+#include "servos_and_motors_handler.h"
+
 
 int app_main(void) {
 
     // Configure console
 #ifndef CONFIG_ESP_CONSOLE_UART_NONE
 #ifndef CONFIG_BLUEPAD32_USB_CONSOLE_ENABLE
-#endif
+#endif	
 #endif
 
+// Init servo's
+    servo_init();
+    
+    
 
     // Configure BTstack for ESP32
     btstack_init();
