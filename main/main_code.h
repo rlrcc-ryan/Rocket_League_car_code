@@ -8,3 +8,4 @@
 #include "sensor_handler.h"
 
 #define throttle_deadzone 40
+#define boost_max_amount 100

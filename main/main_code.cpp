@@ -132,7 +132,7 @@ void throttle_control(bool grounded, int right_trigger, int left_trigger, bool r
 
     if (grounded) {
         if (right_bumper) {
-            pulse = SERVO_CENTER_US + 100;   // boost
+            pulse = SERVO_CENTER_US + boost_max_amount;   // boost
         } else {
             int throttle = right_trigger - left_trigger;   // -1023..1023
             if (abs(throttle) < throttle_deadzone) throttle = 0;          // deadzone
@@ -141,6 +141,48 @@ void throttle_control(bool grounded, int right_trigger, int left_trigger, bool r
     }
     servo_set_pulse(2, pulse);
     servo_set_pulse(5, pulse);
+}
+
+// ============================================================
+// AIR CONTROL FUNCTIONS
+// ============================================================
+
+void air_control(bool grounded, int left_bumper, bool right_bumper, int joystick_x, int joystick_y, bool x_button, bool y_button)
+{   
+    static int boost_value = 0;
+    if (right_bumper) {
+        boost_value = boost_max_amount;   // boost
+    } else {
+        boost_value = 0;
+    }
+
+    if (!grounded) {
+        // CAR IS IN THE AIR: control yaw pitch and roll with the joystick.
+        if (left_bumper) {
+            // ADD BOOST AND ROLL ,YAW AND PITCH CONTROL
+            
+
+
+        } else {
+            
+
+            if (x_button) {
+                // X button pressed: roll left
+                
+            } else if (y_button) {
+                // Y button pressed: roll right
+                
+            } else {
+                // No buttons pressed: center the swivel
+                
+            }
+        }
+
+
+
+
+
+    }
 }
 
 
@@ -292,6 +334,8 @@ void loop() {
         }
 
         throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
+
+        air_control(grounded, control.left_bumper, control.right_bumper, control.x_axis, control.y_axis, control.x, control.y);
 
         // Sturen (servo 1): alleen aan met controller verbonden en op de grond
         if (control.connected && grounded) {
