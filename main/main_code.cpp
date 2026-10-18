@@ -126,20 +126,21 @@ static void jump_abort() {
 // THROTTLE FUNCTIONS
 // ============================================================
 
-void throttle_control(bool grounded, int right_trigger, int left_trigger, bool right_bumper, bool left_bumper) {
+void throttle_control(bool grounded, int right_trigger, int left_trigger, bool right_bumper)
+{
+    int pulse = SERVO_CENTER_US;
+
     if (grounded) {
-        // CAR IS ON GROUND: throttle and brake are active
         if (right_bumper) {
-            // RB pressed: boost
-            servo_set_pulse(2, SERVO_CENTER_US + 100);
-            servo_set_pulse(5, SERVO_CENTER_US + 100);
-        } else  {
-            int throttle_value;
-            throttle_value = right_bumper - left_bumper;
-            
+            pulse = SERVO_CENTER_US + 100;   // boost
+        } else {
+            int throttle = right_trigger - left_trigger;   // -1023..1023
+            if (abs(throttle) < throttle_deadzone) throttle = 0;          // deadzone
+            pulse = SERVO_CENTER_US + throttle * 500 / 1023;
         }
     }
-
+    servo_set_pulse(2, pulse);
+    servo_set_pulse(5, pulse);
 }
 
 
@@ -290,11 +291,11 @@ void loop() {
             
         }
 
+        throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
+
         // Sturen (servo 1): alleen aan met controller verbonden en op de grond
         if (control.connected && grounded) {
             servo_set_pulse(1, axisToPulse(control.x_axis));
-
-            servo_set_pulse(2, axisToPulse(control.y_axis));
         } else {
             servo_set_pulse(1, SERVO_CENTER_US);
         }
