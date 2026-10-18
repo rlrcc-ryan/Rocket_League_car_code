@@ -76,36 +76,26 @@ void dumpGamepad(ControllerPtr ctl) {
 }
 
 void processGamepad(ControllerPtr ctl) {
-    // There are different ways to query whether a button is pressed.
-    // By query each button individually:
-    //  a(), b(), x(), y(), l1(), etc...
-    // Read distance
-    if (car_on_ground) { //
-        // CAR IS ON GROUND ALLOW FOR STEERING
+    bool grounded = car_on_ground();
+
+    if (grounded) {
+        // Car is grounded: Allow steering
         servo_set_pulse(1, axisToPulse(ctl->axisX()));
+
         
+
     } else {
-        // CAR IS IN AIR DISABLE STEERING
+        // Car is in the air: Center steering
         servo_set_pulse(1, SERVO_CENTER_US);
-        
-    }
-    
-    
-    
 
 
-    if (ctl->a()) {
-        
     }
 
-    if (ctl->b()) {
-        
-    }
+    Console.printf("Auto is %s\n", grounded ? "op de grond" : "in de lucht");
 
-    if (ctl->x()) {
-        
-    }
-
+    if (ctl->a()) { }
+    if (ctl->b()) { }
+    if (ctl->x()) { }
     //dumpGamepad(ctl);
 
 }
@@ -173,9 +163,9 @@ void setup() {
 
 void loop() {
     // Afstandssensor continu uitlezen
-    int distance = vl6180x_read_distance();
+    //int distance = vl6180x_read_distance();
 
-    Console.printf("Afstandssensor: %d mm\n", distance);
+    //Console.printf("Afstandssensor: %d mm\n", distance);
 
     // Controller blijven updaten
     BP32.update();

@@ -46,6 +46,33 @@ esp_err_t read_reg8(
     );
 }
 
+void sensors_init(void)
+{
+    i2c_master_bus_config_t bus_config = {};
+    bus_config.i2c_port = I2C_NUM_0;
+    bus_config.sda_io_num = (gpio_num_t)SDA_PIN;
+    bus_config.scl_io_num = (gpio_num_t)SCL_PIN;
+    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_config.glitch_ignore_cnt = 7;
+    bus_config.flags.enable_internal_pullup = true;
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
+
+    i2c_device_config_t adxl_config = {};
+    adxl_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    adxl_config.device_address = ADXL345_ADDR;
+    adxl_config.scl_speed_hz = I2C_FREQUENCY;
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &adxl_config, &adxl345));
+
+    i2c_device_config_t tof_config = {};
+    tof_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    tof_config.device_address = VL6180X_ADDR;
+    tof_config.scl_speed_hz = I2C_FREQUENCY;
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &tof_config, &vl6180x));
+
+    adxl345_init();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    vl6180x_init();
+}
 
 // ============================================================
 // ADXL345
@@ -206,8 +233,18 @@ void vl6180x_init(void)
 
     read_reg8(vl6180x, 0x0016, &reset_status);
 
+    if (read_reg8(vl6180x, 0x0016, &reset_status) != ESP_OK) {
+        printf("VL6180X: geen antwoord bij init\n");
+        return;
+    }
+
     printf("VL6180X reset status: 0x%02X\n", reset_status);
 
+    if (reset_status != 0x01) {
+        printf("VL6180X al geconfigureerd.\n");
+        return;
+    }
+    
     // Recommended VL6180X tuning settings
     write_reg8(vl6180x, 0x0207, 0x01);
     write_reg8(vl6180x, 0x0208, 0x01);
@@ -240,100 +277,73 @@ void vl6180x_init(void)
     write_reg8(vl6180x, 0x01A7, 0x1F);
     write_reg8(vl6180x, 0x0030, 0x00);
 
-    // Recommended public settings
-    write_reg8(vl6180x, 0x0011, 0x10);
-    write_reg8(vl6180x, 0x010A, 0x30);
-    write_reg8(vl6180x, 0x003F, 0x46);
-    write_reg8(vl6180x, 0x0031, 0xFF);
-    write_reg8(vl6180x, 0x0040, 0x63);
+     // Recommended public settings
+    write_reg8(vl6180x, 0x0011, 0x10);   // GPIO1 interrupt-pin
+    write_reg8(vl6180x, 0x010A, 0x30);   // averaging sample period
+    write_reg8(vl6180x, 0x003F, 0x46);   // ALS analogue gain
+    write_reg8(vl6180x, 0x0031, 0xFF);   // VHV repeat rate
+    write_reg8(vl6180x, 0x0040, 0x00);   // ALS integration period (hoog)
+    write_reg8(vl6180x, 0x0041, 0x63);   // ALS integration period (laag)
+    write_reg8(vl6180x, 0x002E, 0x01);   // VHV herkalibratie
+    write_reg8(vl6180x, 0x001B, 0x09);   // range meetinterval
+    write_reg8(vl6180x, 0x003E, 0x31);   // ALS meetinterval
+    write_reg8(vl6180x, 0x0014, 0x24);   // interrupt: nieuwe afstandsmeting klaar
 
-    // Clear interrupt
+    // Reset-vlag wissen en interrupts wissen
+    write_reg8(vl6180x, 0x0016, 0x00);
     write_reg8(vl6180x, 0x0015, 0x07);
 
     printf("VL6180X gestart.\n");
 }
 
 
-/*int vl6180x_read_distance(void)
-{
-    uint8_t status = 0;
-    uint8_t distance = 0;
-
-    // Start single-shot ranging
-    write_reg8(vl6180x, 0x0018, 0x01);
-
-    // Wait until measurement is ready
-    for (int i = 0; i < 100; i++)
-    {
-        read_reg8(vl6180x, 0x004F, &status);
-
-        if ((status & 0x04) != 0)
-        {
-            break;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    // Read distance in mm
-    if (read_reg8(vl6180x, 0x0062, &distance) != ESP_OK)
-    {
-        return -1;
-    }
-
-    // Clear interrupt
-    write_reg8(vl6180x, 0x0015, 0x07);
-
-    return distance;
-}*/
-
 int vl6180x_read_distance(void)
 {
-    uint8_t status = 0;
-    uint8_t distance = 0;
+    uint8_t v = 0;
+    int64_t start;
 
-    // Start een nieuwe meting
-    if (write_reg8(vl6180x, 0x0018, 0x01) != ESP_OK) {
-        printf("Fout: starten van meting mislukt\n");
+    // 1. Is de sensor opnieuw opgestart? Dan eerst opnieuw initialiseren.
+    if (read_reg8(vl6180x, 0x0016, &v) != ESP_OK) return -1;
+    if (v == 0x01) {
+        printf("VL6180X was gereset, opnieuw initialiseren\n");
+        vl6180x_init();
+    }
+
+    // 2. Wacht tot de sensor klaar is voor een nieuwe meting (bit 0 van 0x004D)
+    start = esp_timer_get_time();
+    do {
+        if (read_reg8(vl6180x, 0x004D, &v) != ESP_OK) return -1;
+        if (v & 0x01) break;
+        vTaskDelay(1);                       // minimaal 1 tick
+    } while (esp_timer_get_time() - start < 50000);
+    if (!(v & 0x01)) {
+        printf("Fout: sensor niet klaar, 0x4D = 0x%02X\n", v);
         return -1;
     }
 
-    bool ready = false;
+    // 3. Start een enkele meting
+    if (write_reg8(vl6180x, 0x0018, 0x01) != ESP_OK) return -1;
 
-    // Wacht maximaal 100 ms op een nieuwe meting
-    for (int i = 0; i < 100; i++)
-    {
-        if (read_reg8(vl6180x, 0x004F, &status) != ESP_OK) {
-            printf("Fout: statusregister lezen mislukt\n");
-            return -1;
-        }
+    // 4. Wacht op "nieuwe meting klaar" (onderste 3 bits van 0x4F = 4)
+    start = esp_timer_get_time();
+    do {
+        if (read_reg8(vl6180x, 0x004F, &v) != ESP_OK) return -1;
+        if ((v & 0x07) == 0x04) break;
+        vTaskDelay(1);
+    } while (esp_timer_get_time() - start < 100000);   // 100 ms echte tijd
 
-        if ((status & 0x04) != 0) {
-            ready = true;
-            break;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    // Lees geen resultaat als de meting niet klaar is
-    if (!ready) {
-        printf("Fout: timeout, status = 0x%02X\n", status);
+    if ((v & 0x07) != 0x04) {
+        printf("Fout: timeout, 0x4F = 0x%02X\n", v);
+        write_reg8(vl6180x, 0x0015, 0x07);              // interrupts wissen
         return -1;
     }
 
-    // Lees de afstand
-    if (read_reg8(vl6180x, 0x0062, &distance) != ESP_OK) {
-        printf("Fout: afstandsregister lezen mislukt\n");
-        return -1;
-    }
+    // 5. Afstand lezen en interrupts wissen
+    uint8_t mm = 0;
+    esp_err_t err = read_reg8(vl6180x, 0x0062, &mm);
+    write_reg8(vl6180x, 0x0015, 0x07);
 
-    // Wis de interruptstatus
-    if (write_reg8(vl6180x, 0x0015, 0x07) != ESP_OK) {
-        printf("Waarschuwing: interrupt wissen mislukt\n");
-    }
-
-    return (int)distance;
+    return (err == ESP_OK) ? (int)mm : -1;
 }
 
 bool car_on_ground(void)
@@ -344,7 +354,7 @@ bool car_on_ground(void)
     static int sum = 0;       // som van de metingen in de buffer
 
     int distance = vl6180x_read_distance();
-    printf("Afstandssensor: %d mm\n", distance);
+    //printf("Afstandssensor: %d mm\n", distance);
     if (distance < 0)
     {
         printf("Fout bij lezen afstandssensor.\n");
@@ -374,35 +384,7 @@ bool car_on_ground(void)
     int average = sum / count;
 
     // Drempelwaarde in mm om te bepalen of de auto op de grond staat
-    const int threshold = 150;
+    const int threshold = 92;
 
-    return average < threshold;
-}
-
-void sensors_init(void)
-{
-    i2c_master_bus_config_t bus_config = {};
-    bus_config.i2c_port = I2C_NUM_0;
-    bus_config.sda_io_num = (gpio_num_t)SDA_PIN;
-    bus_config.scl_io_num = (gpio_num_t)SCL_PIN;
-    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_config.glitch_ignore_cnt = 7;
-    bus_config.flags.enable_internal_pullup = true;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
-
-    i2c_device_config_t adxl_config = {};
-    adxl_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    adxl_config.device_address = ADXL345_ADDR;
-    adxl_config.scl_speed_hz = I2C_FREQUENCY;
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &adxl_config, &adxl345));
-
-    i2c_device_config_t tof_config = {};
-    tof_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    tof_config.device_address = VL6180X_ADDR;
-    tof_config.scl_speed_hz = I2C_FREQUENCY;
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &tof_config, &vl6180x));
-
-    adxl345_init();
-    vTaskDelay(pdMS_TO_TICKS(100));
-    vl6180x_init();
+    return average > threshold;
 }

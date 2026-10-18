@@ -31,6 +31,7 @@ int app_main(void) {
 
 // Init servo's
     servo_init();
+    vTaskDelay(pdMS_TO_TICKS(500));
     sensors_init();
     
     
