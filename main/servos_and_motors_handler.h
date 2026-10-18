@@ -13,6 +13,8 @@
  
 #define SERVO_MIN_US     1000
 #define SERVO_CENTER_US  1500
+#define SERVO_SWIVEL_CENTER_US 1000
+#define SERVO_SWIVEL_UP_US  2000
 #define SERVO_MAX_US     2000
  
 #ifdef __cplusplus

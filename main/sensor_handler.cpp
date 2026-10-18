@@ -4,14 +4,29 @@ static i2c_master_bus_handle_t i2c_bus;
 static i2c_master_dev_handle_t adxl345;
 static i2c_master_dev_handle_t vl6180x;
 
-//Settings
-#define DISTANCE_AVG_SAMPLES 5
+// ============================================================
+// Instellingen
+// ============================================================
+
+#define DISTANCE_AVG_SAMPLES   5     // aantal metingen voor het moving average
+#define GROUND_THRESHOLD_MM    92    // gemiddelde > drempel  => auto staat op de grond
+#define SENSOR_TASK_PERIOD_MS  20    // 50 metingen per seconde (de meting zelf duurt ook even)
+#define SENSOR_TASK_STACK      4096  // stackgrootte in bytes
+#define SENSOR_TASK_PRIORITY   3     // laag, zodat Bluetooth niet gestoord wordt
+#define SENSOR_TASK_CORE       0     // 0 of 1
+
+// ============================================================
+// Gedeelde status (geschreven door de sensortaak, gelezen door loop())
+// ============================================================
+
+static volatile bool on_ground = false;       // veilige beginwaarde: in de lucht
+static volatile int  last_distance_mm = -1;
 
 // ============================================================
 // I2C helpers
 // ============================================================
 
-esp_err_t write_reg8(
+static esp_err_t write_reg8(
     i2c_master_dev_handle_t dev,
     uint16_t reg,
     uint8_t value)
@@ -25,8 +40,7 @@ esp_err_t write_reg8(
     return i2c_master_transmit(dev, data, 3, 100);
 }
 
-
-esp_err_t read_reg8(
+static esp_err_t read_reg8(
     i2c_master_dev_handle_t dev,
     uint16_t reg,
     uint8_t *value)
@@ -45,6 +59,10 @@ esp_err_t read_reg8(
         100
     );
 }
+
+// ============================================================
+// Init van de I2C-bus en beide sensoren
+// ============================================================
 
 void sensors_init(void)
 {
@@ -108,59 +126,38 @@ void adxl345_init(void)
 
     printf("ADXL345 Device ID: 0x%02X\n", data);
 
-    // DATA_FORMAT:
-    // 0x0B = FULL_RES + +/-16g
+    // DATA_FORMAT: 0x0B = FULL_RES + +/-16g
     uint8_t config1[] = {
         ADXL345_REG_DATA_FORMAT,
         0x0B
     };
 
-    err = i2c_master_transmit(
-        adxl345,
-        config1,
-        2,
-        100
-    );
+    err = i2c_master_transmit(adxl345, config1, 2, 100);
 
     if (err != ESP_OK)
     {
-        printf("Fout DATA_FORMAT: %s\n",
-               esp_err_to_name(err));
+        printf("Fout DATA_FORMAT: %s\n", esp_err_to_name(err));
         return;
     }
 
-    // POWER_CTL:
-    // 0x08 = Measurement Mode
+    // POWER_CTL: 0x08 = Measurement Mode
     uint8_t config2[] = {
         ADXL345_REG_POWER_CTL,
         0x08
     };
 
-    err = i2c_master_transmit(
-        adxl345,
-        config2,
-        2,
-        100
-    );
+    err = i2c_master_transmit(adxl345, config2, 2, 100);
 
     if (err != ESP_OK)
     {
-        printf("Fout POWER_CTL: %s\n",
-               esp_err_to_name(err));
+        printf("Fout POWER_CTL: %s\n", esp_err_to_name(err));
         return;
     }
 
     // Controleren of POWER_CTL daadwerkelijk 0x08 bevat
     reg = ADXL345_REG_POWER_CTL;
 
-    err = i2c_master_transmit_receive(
-        adxl345,
-        &reg,
-        1,
-        &data,
-        1,
-        100
-    );
+    err = i2c_master_transmit_receive(adxl345, &reg, 1, &data, 1, 100);
 
     if (err == ESP_OK)
     {
@@ -168,23 +165,17 @@ void adxl345_init(void)
     }
     else
     {
-        printf("Fout lezen POWER_CTL: %s\n",
-               esp_err_to_name(err));
+        printf("Fout lezen POWER_CTL: %s\n", esp_err_to_name(err));
     }
 
     printf("ADXL345 gestart.\n");
 }
 
-
 void adxl345_read(float *x, float *y, float *z)
 {
-    // ADXL345:
-    // Bit 7 = READ
-    // Bit 6 = MULTI-BYTE
-    //
-    // 0x32 | 0x80 | 0x40 = 0xF2
-
-    uint8_t reg = ADXL345_REG_DATAX0 | 0x80 | 0x40;
+    // Bij I2C is het registeradres gewoon 0x32; meerdere bytes achter
+    // elkaar lezen werkt automatisch (de 0x80/0x40-bits zijn voor SPI).
+    uint8_t reg = ADXL345_REG_DATAX0;
     uint8_t data[6];
 
     esp_err_t err = i2c_master_transmit_receive(
@@ -198,10 +189,7 @@ void adxl345_read(float *x, float *y, float *z)
 
     if (err != ESP_OK)
     {
-        printf(
-            "Fout bij lezen ADXL345: %s\n",
-            esp_err_to_name(err)
-        );
+        printf("Fout bij lezen ADXL345: %s\n", esp_err_to_name(err));
         return;
     }
 
@@ -209,19 +197,11 @@ void adxl345_read(float *x, float *y, float *z)
     int16_t raw_y = (int16_t)((data[3] << 8) | data[2]);
     int16_t raw_z = (int16_t)((data[5] << 8) | data[4]);
 
-    /*printf(
-        "RAW ADXL345: X=%d Y=%d Z=%d | ",
-        raw_x,
-        raw_y,
-        raw_z
-    );*/
-
     // Full-resolution: ongeveer 3.9 mg/LSB
     *x = raw_x * 0.0039f;
     *y = raw_y * 0.0039f;
     *z = raw_z * 0.0039f;
 }
-
 
 // ============================================================
 // VL6180X
@@ -230,8 +210,6 @@ void adxl345_read(float *x, float *y, float *z)
 void vl6180x_init(void)
 {
     uint8_t reset_status = 0;
-
-    read_reg8(vl6180x, 0x0016, &reset_status);
 
     if (read_reg8(vl6180x, 0x0016, &reset_status) != ESP_OK) {
         printf("VL6180X: geen antwoord bij init\n");
@@ -244,7 +222,7 @@ void vl6180x_init(void)
         printf("VL6180X al geconfigureerd.\n");
         return;
     }
-    
+
     // Recommended VL6180X tuning settings
     write_reg8(vl6180x, 0x0207, 0x01);
     write_reg8(vl6180x, 0x0208, 0x01);
@@ -277,7 +255,7 @@ void vl6180x_init(void)
     write_reg8(vl6180x, 0x01A7, 0x1F);
     write_reg8(vl6180x, 0x0030, 0x00);
 
-     // Recommended public settings
+    // Recommended public settings
     write_reg8(vl6180x, 0x0011, 0x10);   // GPIO1 interrupt-pin
     write_reg8(vl6180x, 0x010A, 0x30);   // averaging sample period
     write_reg8(vl6180x, 0x003F, 0x46);   // ALS analogue gain
@@ -295,7 +273,6 @@ void vl6180x_init(void)
 
     printf("VL6180X gestart.\n");
 }
-
 
 int vl6180x_read_distance(void)
 {
@@ -346,45 +323,84 @@ int vl6180x_read_distance(void)
     return (err == ESP_OK) ? (int)mm : -1;
 }
 
+// ============================================================
+// Sensortaak: meet continu en berekent het moving average
+// ============================================================
+
+static void sensor_task(void *arg)
+{
+    int samples[DISTANCE_AVG_SAMPLES] = {0};
+    int index = 0;     // volgende plek in de buffer
+    int count = 0;     // aantal geldige metingen in de buffer
+    int sum = 0;       // som van de metingen in de buffer
+
+    while (1)
+    {
+        int distance = vl6180x_read_distance();
+        last_distance_mm = distance;
+
+        if (distance < 0)
+        {
+            // Bij een fout: buffer leegmaken en veilig "in de lucht" melden
+            index = 0;
+            count = 0;
+            sum = 0;
+            on_ground = false;
+        }
+        else
+        {
+            // Oudste waarde eruit, nieuwe waarde erin
+            if (count == DISTANCE_AVG_SAMPLES)
+            {
+                sum -= samples[index];
+            }
+            else
+            {
+                count++;
+            }
+
+            samples[index] = distance;
+            sum += distance;
+            index = (index + 1) % DISTANCE_AVG_SAMPLES;
+
+            int average = sum / count;
+
+            // Let op: in jouw opstelling betekent een HOGE waarde "op de grond"
+            on_ground = (average > GROUND_THRESHOLD_MM);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(SENSOR_TASK_PERIOD_MS));
+    }
+}
+
+void sensors_start_task(void)
+{
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        sensor_task,            // functie
+        "sensor_task",          // naam
+        SENSOR_TASK_STACK,      // stackgrootte in bytes
+        NULL,                   // parameter
+        SENSOR_TASK_PRIORITY,   // prioriteit
+        NULL,                   // task handle (niet nodig)
+        SENSOR_TASK_CORE        // core
+    );
+
+    if (ok != pdPASS)
+    {
+        printf("Fout: sensortaak kon niet gestart worden\n");
+    }
+}
+
+// ============================================================
+// Publieke getters (geen I2C, geven direct de laatste waarde terug)
+// ============================================================
+
 bool car_on_ground(void)
 {
-    static int samples[DISTANCE_AVG_SAMPLES];
-    static int index = 0;     // volgende plek in de buffer
-    static int count = 0;     // aantal geldige metingen in de buffer
-    static int sum = 0;       // som van de metingen in de buffer
+    return on_ground;
+}
 
-    int distance = vl6180x_read_distance();
-    //printf("Afstandssensor: %d mm\n", distance);
-    if (distance < 0)
-    {
-        printf("Fout bij lezen afstandssensor.\n");
-
-        // Buffer leegmaken zodat oude waarden niet worden meegenomen
-        index = 0;
-        count = 0;
-        sum = 0;
-
-        return false;
-    }
-
-    // Oudste waarde eruit, nieuwe waarde erin
-    if (count == DISTANCE_AVG_SAMPLES)
-    {
-        sum -= samples[index];
-    }
-    else
-    {
-        count++;
-    }
-
-    samples[index] = distance;
-    sum += distance;
-    index = (index + 1) % DISTANCE_AVG_SAMPLES;
-
-    int average = sum / count;
-
-    // Drempelwaarde in mm om te bepalen of de auto op de grond staat
-    const int threshold = 92;
-
-    return average > threshold;
+int sensors_last_distance(void)
+{
+    return last_distance_mm;
 }

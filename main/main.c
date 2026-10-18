@@ -33,7 +33,7 @@ int app_main(void) {
     servo_init();
     vTaskDelay(pdMS_TO_TICKS(500));
     sensors_init();
-    
+    sensors_start_task();
     
 
     // Configure BTstack for ESP32
