@@ -17,6 +17,8 @@
 
 //Servo
 #include "servos_and_motors_handler.h"
+//Sensors
+#include "sensor_handler.h"
 
 
 int app_main(void) {
@@ -29,6 +31,7 @@ int app_main(void) {
 
 // Init servo's
     servo_init();
+    sensors_init();
     
     
 

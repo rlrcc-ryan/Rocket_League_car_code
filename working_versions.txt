@@ -1,0 +1,24 @@
+PS C:\Users\ryand\Desktop\Rocket_League_car_code> C:\Users\ryand\.platformio\penv\Scripts\platformio.exe --version
+PlatformIO Core, version 6.1.18
+PS C:\Users\ryand\Desktop\Rocket_League_car_code> C:\Users\ryand\.platformio\penv\Scripts\platformio.exe pkg list
+***********************************************************************************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+***********************************************************************************************************************************************
+Resolving esp32dev dependencies...
+Platform espressif32 @ 54.3.21 (required: https://github.com/pioarduino/platform-espressif32/releases/download/54.03.21-2/platform-espressif32.zip)
+├── framework-espidf @ 3.50402.0 (required: https://github.com/pioarduino/esp-idf/releases/download/v5.4.2/esp-idf-v5.4.2.zip)
+├── tool-cmake @ 3.30.2 (required: C:\Users\ryand\.platformio\packages\tool-cmake)
+├── tool-dfuutil-arduino @ 1.11.0 (required: https://github.com/pioarduino/registry/releases/download/0.0.1/dfuutil-arduino-v1.11.0.zip)
+├── tool-esp-rom-elfs @ 2024.10.11 (required: C:\Users\ryand\.platformio\packages\tool-esp-rom-elfs)
+├── tool-esptoolpy @ 5.0.2 (required: C:\Users\ryand\.platformio\packages\tool-esptoolpy)
+├── tool-mkfatfs @ 2.0.1 (required: https://github.com/pioarduino/registry/releases/download/0.0.1/mkfatfs-v2.0.1.zip)
+├── tool-mklittlefs @ 3.2.0 (required: C:\Users\ryand\.platformio\packages\tool-mklittlefs)
+├── tool-mklittlefs-4.0.0 @ 4.0.0 (required: https://github.com/pioarduino/registry/releases/download/0.0.1/mklittlefs-4.0.0.zip)
+├── tool-mkspiffs @ 2.230.0 (required: https://github.com/pioarduino/registry/releases/download/0.0.1/mkspiffs-v2.230.0.zip)
+├── tool-ninja @ 1.13.1 (required: C:\Users\ryand\.platformio\packages\tool-ninja)
+├── tool-scons @ 4.40801.0 (required: C:\Users\ryand\.platformio\packages\tool-scons)
+└── toolchain-xtensa-esp-elf @ 14.2.0+20241119 (required: C:\Users\ryand\.platformio\packages\toolchain-xtensa-esp-elf)
+
+PS C:\Users\ryand\Desktop\Rocket_League_car_code> 

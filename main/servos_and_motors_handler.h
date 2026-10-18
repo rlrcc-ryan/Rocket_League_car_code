@@ -1,6 +1,15 @@
 #pragma once
  
 #include <stdint.h>
+#include <stdio.h>
+
+#include <Arduino.h>
+#include "sdkconfig.h"
+ 
+#include "driver/ledc.h"
+#include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
  
 #define SERVO_MIN_US     1000
 #define SERVO_CENTER_US  1500

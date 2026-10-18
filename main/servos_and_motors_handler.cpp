@@ -1,21 +1,7 @@
-#include <stdio.h>
-#include <stdint.h>
-
-#include <Arduino.h>
-#include "sdkconfig.h"
- 
-#include "driver/ledc.h"
-#include "esp_err.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 #include "servos_and_motors_handler.h"
  
 #define SERVO_COUNT      6
  
-#define SERVO_MIN_US     1000
-#define SERVO_CENTER_US  1500
-#define SERVO_MAX_US     2000
  
 #define SERVO_FREQ_HZ    50
 #define SERVO_PERIOD_US  (1000000UL / SERVO_FREQ_HZ)   // 20.000 us

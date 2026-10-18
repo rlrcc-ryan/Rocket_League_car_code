@@ -7,6 +7,9 @@
 #include <Arduino.h>
 #include <Bluepad32.h>
 #include <servos_and_motors_handler.h>
+#include "sensor_handler.h"
+
+
 
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
@@ -76,7 +79,19 @@ void processGamepad(ControllerPtr ctl) {
     // There are different ways to query whether a button is pressed.
     // By query each button individually:
     //  a(), b(), x(), y(), l1(), etc...
-    servo_set_pulse(0, axisToPulse(ctl->axisX()));
+    // Read distance
+    if (car_on_ground) { //
+        // CAR IS ON GROUND ALLOW FOR STEERING
+        servo_set_pulse(1, axisToPulse(ctl->axisX()));
+        
+    } else {
+        // CAR IS IN AIR DISABLE STEERING
+        servo_set_pulse(1, SERVO_CENTER_US);
+        
+    }
+    
+    
+    
 
 
     if (ctl->a()) {
@@ -91,7 +106,7 @@ void processGamepad(ControllerPtr ctl) {
         
     }
 
-    dumpGamepad(ctl);
+    //dumpGamepad(ctl);
 
 }
 
@@ -144,7 +159,7 @@ void setup() {
 }
 
 // Arduino loop function. Runs in CPU 1.
-void loop() {
+/*void loop() {
     
     bool dataUpdated = BP32.update();
     if (dataUpdated)
@@ -154,4 +169,17 @@ void loop() {
         
     
     delay(10);
+}*/
+
+void loop() {
+    // Afstandssensor continu uitlezen
+    int distance = vl6180x_read_distance();
+
+    Console.printf("Afstandssensor: %d mm\n", distance);
+
+    // Controller blijven updaten
+    BP32.update();
+    processControllers();
+
+    delay(100);
 }
