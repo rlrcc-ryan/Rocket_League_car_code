@@ -31,19 +31,39 @@ static const ledc_channel_t servo_channel[SERVO_COUNT] = {
  * @param servo    servo nummer 0..5
  * @param pulse_us pulsbreedte in microseconden (1000..2000)
  */
+#define SMOOTH_SERVO_INDEX   1       // alleen deze servo wordt gesmooth
+#define SMOOTH_FACTOR        0.5f    // 0.0 - 1.0: lager = vloeiender maar trager
+
 void servo_set_pulse(uint8_t servo, uint32_t pulse_us)
 {
     if (servo >= SERVO_COUNT) {
         printf("Ongeldig servo nummer: %u\n", servo);
         return;
     }
- 
+
     // Begrens de puls om de servo te beschermen
     if (pulse_us < SERVO_MIN_US) pulse_us = SERVO_MIN_US;
     if (pulse_us > SERVO_MAX_US) pulse_us = SERVO_MAX_US;
- 
+
+    // Smoothing alleen voor servo 1
+    if (servo == SMOOTH_SERVO_INDEX)
+    {
+        static float smoothed = SERVO_CENTER_US;   // begint in de middenstand
+
+        smoothed += ((float)pulse_us - smoothed) * SMOOTH_FACTOR;
+
+        // Bij heel kleine verschillen direct naar het doel, anders blijft
+        // de waarde er asymptotisch naartoe kruipen
+        if (smoothed - (float)pulse_us < 1.0f && (float)pulse_us - smoothed < 1.0f)
+        {
+            smoothed = (float)pulse_us;
+        }
+
+        pulse_us = (uint32_t)(smoothed + 0.5f);    // afronden
+    }
+
     uint32_t duty = (pulse_us * SERVO_DUTY_MAX) / SERVO_PERIOD_US;
- 
+
     ESP_ERROR_CHECK(
         ledc_set_duty(LEDC_LOW_SPEED_MODE, servo_channel[servo], duty)
     );
