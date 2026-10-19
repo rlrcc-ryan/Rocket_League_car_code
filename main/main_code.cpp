@@ -147,41 +147,43 @@ void throttle_control(bool grounded, int right_trigger, int left_trigger, bool r
 // AIR CONTROL FUNCTIONS
 // ============================================================
 
-void air_control(bool grounded, int left_bumper, bool right_bumper, int joystick_x, int joystick_y, bool x_button, bool y_button)
-{   
+void air_control(bool grounded, int left_bumper, bool right_bumper, 
+    int joystick_x, int joystick_y, bool x_button, bool y_button)
+{
     static int boost_value = 0;
-    if (right_bumper) {
-        boost_value = boost_max_amount;   // boost
-    } else {
-        boost_value = 0;
+    boost_value = right_bumper ? boost_max_amount : 0;
+
+    if (grounded) {
+        // Op de grond: voorste motoren uit (achterste motoren: throttle_control)
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
+        return;
     }
 
-    if (!grounded) {
-        // CAR IS IN THE AIR: control yaw pitch and roll with the joystick.
-        if (left_bumper) {
-            // ADD BOOST AND ROLL ,YAW AND PITCH CONTROL
-            
+    if (left_bumper) {
+        // LB: pitch met de voorste motoren, roll met de achterste (+ boost)
+        int roll = joystick_x * BACK_TORQUE_US / 512;
+        int pitch = joystick_y * FRONT_STRENGTH_US / 512;
 
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + pitch);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - pitch);
+        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + boost_value - roll);
+        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + boost_value + roll);
+    } else {
+        // Geen LB: pitch + yaw met de voorste motoren
+        int yaw = joystick_x * FRONT_TORQUE_US / 512;
+        int pitch = joystick_y * FRONT_STRENGTH_US / 512;
 
-        } else {
-            
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + yaw);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - yaw);
 
-            if (x_button) {
-                // X button pressed: roll left
-                
-            } else if (y_button) {
-                // Y button pressed: roll right
-                
-            } else {
-                // No buttons pressed: center the swivel
-                
-            }
-        }
+        // X / Y: roll links / rechts met de achterste motoren (+ boost)
+        int roll = 0;
+        if (x_button)      roll = -BACK_TORQUE_US;
+        else if (y_button) roll =  BACK_TORQUE_US;
 
-
-
-
-
+        servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + boost_value - roll);
+        servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + boost_value + roll);
     }
 }
 
@@ -333,9 +335,9 @@ void loop() {
             
         }
 
-        throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
 
-        air_control(grounded, control.left_bumper, control.right_bumper, control.x_axis, control.y_axis, control.x, control.y);
+        air_control(grounded, control.left_bumper, control.right_bumper, 
+            control.x_axis, control.y_axis, control.x, control.y);
 
         // Sturen (servo 1): alleen aan met controller verbonden en op de grond
         if (control.connected && grounded) {
@@ -357,7 +359,12 @@ void loop() {
         if (!jump_active()) {
             // ... hier komt later je normale besturing van servo 0, 2 en 3 ...
         }
-    }
 
+        if (!jump_active()) {
+        throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
+        air_control(grounded, control.left_bumper, control.right_bumper,
+                control.x_axis, control.y_axis, control.x, control.y);
+        }
+    }
     delay(1);
 }
