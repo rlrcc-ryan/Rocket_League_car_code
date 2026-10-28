@@ -14,18 +14,20 @@ static uint32_t lastUpdate = 0;
 // JUMP TOESTANDSMACHINE
 // ============================================================
 
-enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3 };
+enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3, JUMP_STEP4 };
 
 static JumpState jumpState = JUMP_IDLE;
 static uint32_t  jumpStepStart = 0;      // tijdstip waarop de huidige stap begon
 static bool      hasBeenOnGround = false;
-static bool      lastX = false;          // voor het detecteren van een nieuwe knopdruk
+static bool      lastA = false;          // voor het detecteren van een nieuwe knopdruk
 
-// Wachttijden per stap (ms)
-#define JUMP_DELAY_STEP1_MS  100   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
-#define JUMP_DELAY_STEP2_MS  100   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
-#define JUMP_DELAY_STEP3_MS  100   // servo 2 en 3 terug -> daarna servo 0 terug
-#define JUMP_GROUND_GRACE    3000  // ms na laatste grondcontact dat springen mag
+static uint8_t  jumpsUsed = 0;          // aantal sprongen sinds het laatste grondcontact
+static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong startte
+
+#define JUMP_MAX_COUNT          2       // eerste sprong + double jump
+#define JUMP_RESET_LOCKOUT_MS   500     // zolang na een sprong de teller niet gereset mag worden
+
+
 
 // ============================================================
 // CONTROLLER STATUS
@@ -63,6 +65,7 @@ static uint32_t jump_delay_ms(JumpState state) {
         case JUMP_STEP1: return JUMP_DELAY_STEP1_MS;
         case JUMP_STEP2: return JUMP_DELAY_STEP2_MS;
         case JUMP_STEP3: return JUMP_DELAY_STEP3_MS;
+        case JUMP_STEP4: return JUMP_DELAY_STEP4_MS;
         default:         return 0;
     }
 }
@@ -71,10 +74,16 @@ static void jump_start(uint32_t now) {
     // Alleen starten als er niet al een sprong bezig is
     if (jump_active()) return;
 
+    // Maximaal 2 sprongen tot de auto weer op de grond staat
+    if (jumpsUsed >= JUMP_MAX_COUNT) return;
+
     // Alleen springen als de auto de afgelopen 3 seconden de grond heeft geraakt
     if (!hasBeenOnGround || (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
 
-    servo_set_pulse(0, SERVO_SWIVEL_UP_US);
+    jumpsUsed++;
+    lastJumpTime = now;
+
+    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
     jumpState = JUMP_STEP1;
     jumpStepStart = now;
 }
@@ -87,26 +96,34 @@ static void jump_update(uint32_t now) {
 
     switch (jumpState) {
         case JUMP_STEP1:
-            servo_set_pulse(2, SERVO_CENTER_US + 100);
-            servo_set_pulse(3, SERVO_CENTER_US + 100);
-            servo_set_pulse(4, SERVO_CENTER_US + 100);
-            servo_set_pulse(5, SERVO_CENTER_US + 100);
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_preload_amount);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_preload_amount);
+            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_preload_amount);
+            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - jump_preload_amount);
             jumpState = JUMP_STEP2;
             break;
 
         case JUMP_STEP2:
-            servo_set_pulse(2, SERVO_CENTER_US);
-            servo_set_pulse(3, SERVO_CENTER_US);
-            servo_set_pulse(4, SERVO_CENTER_US);
-            servo_set_pulse(5, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_max_amount + 130);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_max_amount + 130);
+            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_max_amount);
+            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - jump_max_amount);
             jumpState = JUMP_STEP3;
             break;
 
         case JUMP_STEP3:
-            servo_set_pulse(0, SERVO_SWIVEL_CENTER_US);
-            jumpState = JUMP_IDLE;
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
+            jumpState = JUMP_STEP4;
             break;
 
+        case JUMP_STEP4:
+            servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+            jumpState = JUMP_IDLE;
+            break;
+            
         default:
             break;
     }
@@ -148,7 +165,7 @@ void throttle_control(bool grounded, int right_trigger, int left_trigger, bool r
 // ============================================================
 
 void air_control(bool grounded, int left_bumper, bool right_bumper, 
-    int joystick_x, int joystick_y, bool x_button, bool y_button)
+    int joystick_x, int joystick_y, bool x_button, bool b_button)
 {
     static int boost_value = 0;
     boost_value = right_bumper ? boost_max_amount : 0;
@@ -180,7 +197,7 @@ void air_control(bool grounded, int left_bumper, bool right_bumper,
         // X / Y: roll links / rechts met de achterste motoren (+ boost)
         int roll = 0;
         if (x_button)      roll = -BACK_TORQUE_US;
-        else if (y_button) roll =  BACK_TORQUE_US;
+        else if (b_button) roll =  BACK_TORQUE_US;
 
         servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + boost_value - roll);
         servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + boost_value + roll);
@@ -215,7 +232,8 @@ void onDisconnectedController(ControllerPtr ctl) {
     // Alle controllerwaarden terug naar 0 / false
     control = ControlState();
     hasBeenOnGround = false;
-    lastX = false;
+    lastA = false;
+    jumpsUsed = 0;
 
     // Lopende sprong afbreken en servo's veilig zetten
     jump_abort();
@@ -328,42 +346,35 @@ void loop() {
         
         // Geeft alleen de laatst opgeslagen waarde van de sensortaak terug
         bool grounded = car_on_ground();
-        Console.printf("afstand=%d mm, grounded=%d\n", sensors_last_distance(), grounded);
+
+        if (grounded && !jump_active() && (now - lastJumpTime) > JUMP_RESET_LOCKOUT_MS) {
+            jumpsUsed = 0;
+        }
         if (grounded) {
             control.lastOnGround = now;
             hasBeenOnGround = true;
-            
         }
 
-
-        air_control(grounded, control.left_bumper, control.right_bumper, 
-            control.x_axis, control.y_axis, control.x, control.y);
-
-        // Sturen (servo 1): alleen aan met controller verbonden en op de grond
+        // Sturen (servo 1)
         if (control.connected && grounded) {
             servo_set_pulse(1, axisToPulse(control.x_axis));
         } else {
             servo_set_pulse(1, SERVO_CENTER_US);
         }
 
-        // Springen alleen bij een NIEUWE druk op X, niet zolang de knop ingedrukt blijft
-        if (control.x && !lastX) {
+        // Springen met A, alleen bij een NIEUWE druk
+        if (control.a && !lastA) {
             jump_start(now);
         }
-        lastX = control.x;
+        lastA = control.a;
 
-        // Sprong stap voor stap uitvoeren (zonder delay)
         jump_update(now);
 
-        // Servo 0, 2 en 3 alleen door de rest van de code laten sturen als er niet gesprongen wordt
+        // Gas en luchtbesturing alleen als er niet gesprongen wordt
         if (!jump_active()) {
-            // ... hier komt later je normale besturing van servo 0, 2 en 3 ...
-        }
-
-        if (!jump_active()) {
-        throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
-        air_control(grounded, control.left_bumper, control.right_bumper,
-                control.x_axis, control.y_axis, control.x, control.y);
+            throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
+            air_control(grounded, control.left_bumper, control.right_bumper,
+                        control.x_axis, control.y_axis, control.x, control.b);
         }
     }
     delay(1);

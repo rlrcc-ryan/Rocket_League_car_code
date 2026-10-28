@@ -19,3 +19,12 @@
 
 #define throttle_deadzone 40
 #define boost_max_amount 100
+#define jump_max_amount 300 //Max is 1000
+#define jump_preload_amount 100
+
+// Wachttijden per stap (ms)
+#define JUMP_DELAY_STEP1_MS  100   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
+#define JUMP_DELAY_STEP2_MS  100   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
+#define JUMP_DELAY_STEP3_MS  300   // servo 2 en 3 terug -> daarna servo 0 terug
+#define JUMP_DELAY_STEP4_MS  100   // servo 0 terug -> daarna sprong voltooid
+#define JUMP_GROUND_GRACE    3000  // ms na laatste grondcontact dat springen mag
