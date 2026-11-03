@@ -21,6 +21,7 @@
 #define boost_max_amount 100
 #define jump_max_amount 300 //Max is 1000
 #define jump_preload_amount 100
+#define wall_mode_amount 100
 
 // Wachttijden per stap (ms)
 #define JUMP_DELAY_STEP1_MS  100   // servo 0 omhoog -> daarna servo 2 en 3 omhoog

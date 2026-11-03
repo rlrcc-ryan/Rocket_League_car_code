@@ -16,10 +16,13 @@ static uint32_t lastUpdate = 0;
 
 enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3, JUMP_STEP4 };
 
-static JumpState jumpState = JUMP_IDLE;
-static uint32_t  jumpStepStart = 0;      // tijdstip waarop de huidige stap begon
-static bool      hasBeenOnGround = false;
-static bool      lastA = false;          // voor het detecteren van een nieuwe knopdruk
+static JumpState    jumpState = JUMP_IDLE;
+static uint32_t     jumpStepStart = 0;      // tijdstip waarop de huidige stap begon
+static bool         hasBeenOnGround = false;
+static bool         lastA = false;          // voor het detecteren van een nieuwe knopdruk
+static bool         Y_toggle_state = false;          // voor het detecteren van een nieuwe knopdruk
+static bool         lastY = false;          // voor het detecteren van een nieuwe knopdruk
+static bool         wallModeWasOn = false;   // om één keer terug te zetten bij uitschakelen
 
 static uint8_t  jumpsUsed = 0;          // aantal sprongen sinds het laatste grondcontact
 static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong startte
@@ -204,6 +207,27 @@ void air_control(bool grounded, int left_bumper, bool right_bumper,
     }
 }
 
+// ============================================================
+// WALL MODE
+// ============================================================
+
+static void wall_mode(bool grounded, bool enabled) {
+    if (grounded && enabled) {
+        Console.println("Wall mode enabled");
+        servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_DOWN_US);
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + wall_mode_amount);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US + wall_mode_amount);
+        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + wall_mode_amount);
+        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + wall_mode_amount);
+    } else {
+        Console.println("Wall mode disabled");
+        servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
+        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US);
+        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US);
+    }
+}
 
 // ============================================================
 // BLUEPAD32 CALLBACKS
@@ -234,6 +258,9 @@ void onDisconnectedController(ControllerPtr ctl) {
     hasBeenOnGround = false;
     lastA = false;
     jumpsUsed = 0;
+    Y_toggle_state = false;
+    lastY = false;
+    wallModeWasOn = false;
 
     // Lopende sprong afbreken en servo's veilig zetten
     jump_abort();
@@ -370,11 +397,32 @@ void loop() {
 
         jump_update(now);
 
-        // Gas en luchtbesturing alleen als er niet gesprongen wordt
-        if (!jump_active()) {
-            throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
-            air_control(grounded, control.left_bumper, control.right_bumper,
-                        control.x_axis, control.y_axis, control.x, control.b);
+    
+        if (control.y && !lastY) {              // Y is net ingedrukt
+            Y_toggle_state = !Y_toggle_state;   // true wordt false, false wordt true
+        }
+        lastY = control.y;
+
+        if (Y_toggle_state) {
+            // WALL MODE AAN (niet tijdens een sprong, anders overschrijft hij de sprong)
+            if (!jump_active()) {
+                wall_mode(grounded, true);
+            }
+            wallModeWasOn = true;
+
+        } else {
+            // NORMALE BESTURING, precies zoals voorheen
+            if (wallModeWasOn) {
+                wall_mode(grounded, false);     // eenmalig terugzetten naar het midden
+                wallModeWasOn = false;
+            }
+
+            // Gas en luchtbesturing alleen als er niet gesprongen wordt
+            if (!jump_active()) {
+                throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
+                air_control(grounded, control.left_bumper, control.right_bumper,
+                            control.x_axis, control.y_axis, control.x, control.b);
+            }
         }
     }
     delay(1);

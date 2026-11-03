@@ -11,11 +11,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
  
-#define SERVO_MIN_US     1000
+#define SERVO_MIN_US     500
 #define SERVO_CENTER_US  1500
-#define SERVO_SWIVEL_CENTER_US 1000
-#define SERVO_SWIVEL_UP_US  2000
-#define SERVO_MAX_US     2000
+#define SERVO_SWIVEL_CENTER_US 1400
+#define SERVO_SWIVEL_DOWN_US  2500
+#define SERVO_SWIVEL_UP_US  500
+#define SERVO_MAX_US     2500
  
 #ifdef __cplusplus
 extern "C" {
