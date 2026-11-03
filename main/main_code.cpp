@@ -211,17 +211,24 @@ void air_control(bool grounded, int left_bumper, bool right_bumper,
 // WALL MODE
 // ============================================================
 
-static void wall_mode(bool grounded, bool enabled) {
+static void wall_mode(bool grounded, bool enabled, int right_trigger, int left_trigger) {
     if (grounded && enabled) {
-        Console.println("Wall mode enabled");
-        servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_DOWN_US);
+        int throttle = right_trigger - left_trigger;               // -1023..1023
+        if (abs(throttle) < throttle_deadzone) throttle = 0;
+
+        // Gas en rem geven allebei extra motorvermogen (nooit onder wall_mode_amount)
+        int back_extra = abs(throttle) * WALL_BACK_EXTRA_US / 1023;
+
+        // Gas = swivel lager, rem = swivel hoger
+        int swivel_shift = throttle * WALL_SWIVEL_RANGE_US / 1023;
+
+        servo_set_pulse(SERVO_SWIVEL,  SERVO_SWIVEL_DOWN_US - swivel_shift);
         servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + wall_mode_amount);
         servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US + wall_mode_amount);
-        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + wall_mode_amount);
-        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + wall_mode_amount);
+        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + wall_mode_amount + back_extra);
+        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + wall_mode_amount + back_extra);
     } else {
-        Console.println("Wall mode disabled");
-        servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+        servo_set_pulse(SERVO_SWIVEL,  SERVO_SWIVEL_CENTER_US);
         servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
         servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
         servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US);
@@ -406,14 +413,14 @@ void loop() {
         if (Y_toggle_state) {
             // WALL MODE AAN (niet tijdens een sprong, anders overschrijft hij de sprong)
             if (!jump_active()) {
-                wall_mode(grounded, true);
+                wall_mode(grounded, true, control.right_trigger, control.left_trigger);
             }
             wallModeWasOn = true;
 
         } else {
-            // NORMALE BESTURING, precies zoals voorheen
+            // NORMALE BESTURING
             if (wallModeWasOn) {
-                wall_mode(grounded, false);     // eenmalig terugzetten naar het midden
+                wall_mode(grounded, false, 0, 0);   // eenmalig terugzetten naar het midden
                 wallModeWasOn = false;
             }
 

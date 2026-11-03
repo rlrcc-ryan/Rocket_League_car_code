@@ -22,3 +22,6 @@ Platform espressif32 @ 54.3.21 (required: https://github.com/pioarduino/platform
 └── toolchain-xtensa-esp-elf @ 14.2.0+20241119 (required: C:\Users\ryand\.platformio\packages\toolchain-xtensa-esp-elf)
 
 PS C:\Users\ryand\Desktop\Rocket_League_car_code> 
+
+
+Magic fix: C:\Users\ryand\.platformio\penv\Scripts\python.exe -m pip install platformio==6.1.18
