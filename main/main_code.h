@@ -21,8 +21,8 @@
 #define boost_max_amount 100
 #define jump_max_amount 300 //Max is 1000
 #define jump_preload_amount 100
-#define wall_mode_amount 100
-#define WALL_BACK_EXTRA_US       150   // extra motorvermogen boven wall_mode_amount bij vol gas/rem
+#define wall_mode_amount 250
+#define WALL_BACK_EXTRA_US       300   // extra motorvermogen boven wall_mode_amount bij vol gas/rem
 #define WALL_SWIVEL_RANGE_US     200   // maximale swivel-uitslag t.o.v. SERVO_SWIVEL_DOWN_US
 
 // Wachttijden per stap (ms)

@@ -216,17 +216,34 @@ static void wall_mode(bool grounded, bool enabled, int right_trigger, int left_t
         int throttle = right_trigger - left_trigger;               // -1023..1023
         if (abs(throttle) < throttle_deadzone) throttle = 0;
 
-        // Gas en rem geven allebei extra motorvermogen (nooit onder wall_mode_amount)
-        int back_extra = abs(throttle) * WALL_BACK_EXTRA_US / 1023;
+        int amount = abs(throttle);                                // 0..1023
 
-        // Gas = swivel lager, rem = swivel hoger
-        int swivel_shift = throttle * WALL_SWIVEL_RANGE_US / 1023;
+        int swivel_pulse;
+        int back_pulse;
 
-        servo_set_pulse(SERVO_SWIVEL,  SERVO_SWIVEL_DOWN_US - swivel_shift);
+        if (throttle >= 0) {
+            // GAS: swivel wijst omlaag en schuift met meer gas naar het midden
+            swivel_pulse = SERVO_SWIVEL_DOWN_US
+                         + (SERVO_SWIVEL_CENTER_US - SERVO_SWIVEL_DOWN_US) * amount / 1023;
+
+            // Achterste motoren vooruit, nooit zachter dan wall_mode_amount
+            back_pulse = SERVO_CENTER_US + wall_mode_amount
+                       + WALL_BACK_EXTRA_US * amount / 1023;
+        } else {
+            // REM: swivel wijst omhoog en schuift met meer gas naar het midden
+            swivel_pulse = SERVO_SWIVEL_UP_US
+                         + (SERVO_SWIVEL_CENTER_US - SERVO_SWIVEL_UP_US) * amount / 1023;
+
+            // Achterste motoren achteruit, nooit zachter dan wall_mode_amount
+            back_pulse = SERVO_CENTER_US - wall_mode_amount
+                       - WALL_BACK_EXTRA_US * amount / 1023;
+        }
+
+        servo_set_pulse(SERVO_SWIVEL,  swivel_pulse);
         servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + wall_mode_amount);
         servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US + wall_mode_amount);
-        servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + wall_mode_amount + back_extra);
-        servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + wall_mode_amount + back_extra);
+        servo_set_pulse(SERVO_BACK_1,  back_pulse);
+        servo_set_pulse(SERVO_BACK_2,  back_pulse);
     } else {
         servo_set_pulse(SERVO_SWIVEL,  SERVO_SWIVEL_CENTER_US);
         servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
