@@ -66,6 +66,54 @@ struct ControlState {
 static ControlState control;     // laatst bekende controllerwaarden
 
 // ============================================================
+// PID: hoek vasthouden tijdens de sprong
+// ============================================================
+
+static float pitchSetpoint  = 0.0f;
+static float pidIntegral    = 0.0f;
+static float pidLastPitch   = 0.0f;
+
+static void pid_reset(float setpoint) {
+    pitchSetpoint = setpoint;
+    pidIntegral   = 0.0f;
+    pidLastPitch  = setpoint;
+}
+
+// Draait elke 20 ms; corrigeert de motoren zolang de sprong in de gasfase zit
+static void jump_pitch_hold() {
+    if (jumpState != JUMP_STEP2 && jumpState != JUMP_STEP3) return;
+
+    const float dt = 0.02f;
+    float pitch = sensors_pitch_deg();
+    float err   = pitchSetpoint - pitch;
+
+    pidIntegral += PITCH_KI * err * dt;
+    pidIntegral  = constrain(pidIntegral, -(float)PITCH_I_MAX_US, (float)PITCH_I_MAX_US);
+
+    float derivative = -(pitch - pidLastPitch) / dt;   // op de meting, niet op de fout
+    pidLastPitch = pitch;
+
+    float u = PITCH_KP * err + pidIntegral + PITCH_KD * derivative;
+    u = constrain(u, -(float)PITCH_OUT_MAX_US, (float)PITCH_OUT_MAX_US);
+    u *= PITCH_PID_SIGN;
+
+    int back_base, front_base;
+    if (jumpState == JUMP_STEP2) {            // preload-fase
+        back_base  = SERVO_CENTER_US + jump_preload_amount;
+        front_base = SERVO_CENTER_US - jump_preload_amount;
+    } else {                                  // maximale-gasfase
+        back_base  = SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount;
+        front_base = SERVO_CENTER_US - jump_max_amount;
+    }
+
+    int corr = (int)u;
+    servo_set_pulse(SERVO_BACK_1,  back_base  - corr);
+    servo_set_pulse(SERVO_BACK_2,  back_base  - corr);
+    servo_set_pulse(SERVO_FRONT_1, front_base - corr);
+    servo_set_pulse(SERVO_FRONT_2, front_base - corr);
+}
+
+// ============================================================
 // STUUR-TRIM (dpad links/rechts)
 // ============================================================
 
@@ -107,7 +155,7 @@ static void jump_start(uint32_t now) {
 
     jumpsUsed++;
     lastJumpTime = now;
-
+    pid_reset(sensors_pitch_deg());   // huidige hoek is het doel
     servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
     jumpState = JUMP_STEP1;
     jumpStepStart = now;
@@ -121,6 +169,7 @@ static void jump_update(uint32_t now) {
 
     switch (jumpState) {
         case JUMP_STEP1:
+            //pid_reset(sensors_pitch_deg());
             servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_preload_amount);
             servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_preload_amount);
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_preload_amount);
@@ -460,6 +509,7 @@ void loop() {
         lastA = control.a;
 
         jump_update(now);
+        jump_pitch_hold();
 
     
         if (control.y && !lastY) {              // Y is net ingedrukt

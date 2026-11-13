@@ -1,4 +1,10 @@
 #include "sensor_handler.h"
+#include <math.h>
+
+#define PITCH_LPF_ALPHA   0.5f   // 0..1: lager = vloeiender maar trager
+#define PITCH_SIGN        1.0f   // zet op -1.0f als voorover kantelen een negatieve hoek geeft
+
+static volatile float pitch_deg = 0.0f;
 
 static i2c_master_bus_handle_t i2c_bus;
 static i2c_master_dev_handle_t adxl345;
@@ -14,6 +20,11 @@ static i2c_master_dev_handle_t vl6180x;
 #define SENSOR_TASK_STACK      4096  // stackgrootte in bytes
 #define SENSOR_TASK_PRIORITY   3     // laag, zodat Bluetooth niet gestoord wordt
 #define SENSOR_TASK_CORE       0     // 0 of 1
+
+// Pas dit aan op hoe de ADXL345 gemonteerd zit (teken mag ook: -ay)
+#define ACC_FWD   (ay)   // as die naar voren/achteren wijst
+#define ACC_SIDE  (ax)   // as die naar links/rechts wijst
+#define ACC_UP    (az)   // as die omhoog wijst
 
 // ============================================================
 // Gedeelde status (geschreven door de sensortaak, gelezen door loop())
@@ -189,7 +200,7 @@ void adxl345_read(float *x, float *y, float *z)
 
     if (err != ESP_OK)
     {
-        printf("Fout bij lezen ADXL345: %s\n", esp_err_to_name(err));
+        //printf("Fout bij lezen ADXL345: %s\n", esp_err_to_name(err));
         return;
     }
 
@@ -373,6 +384,23 @@ static void sensor_task(void *arg)
     }
 }
 
+static void attitude_task(void *arg)
+{
+    TickType_t last = xTaskGetTickCount();
+    while (1)
+    {
+        float ax = NAN, ay = NAN, az = NAN;
+        adxl345_read(&ax, &ay, &az);
+        if (!isnan(ax) && !isnan(ay) && !isnan(az))
+        {
+            float raw = atan2f(ACC_FWD, sqrtf(ACC_SIDE * ACC_SIDE + ACC_UP * ACC_UP)) * 57.29578f;
+            raw *= PITCH_SIGN;
+            pitch_deg += (raw - pitch_deg) * PITCH_LPF_ALPHA;
+        }
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(10));   // 100 Hz
+    }
+}
+
 void sensors_start_task(void)
 {
     BaseType_t ok = xTaskCreatePinnedToCore(
@@ -384,6 +412,8 @@ void sensors_start_task(void)
         NULL,                   // task handle (niet nodig)
         SENSOR_TASK_CORE        // core
     );
+
+    xTaskCreatePinnedToCore(attitude_task, "attitude", 4096, NULL, 3, NULL, SENSOR_TASK_CORE);
 
     if (ok != pdPASS)
     {
@@ -403,4 +433,9 @@ bool car_on_ground(void)
 int sensors_last_distance(void)
 {
     return last_distance_mm;
+}
+
+float sensors_pitch_deg(void)
+{
+    return pitch_deg;
 }

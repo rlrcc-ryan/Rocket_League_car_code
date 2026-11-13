@@ -47,6 +47,7 @@ void adxl345_init(void);
 void adxl345_read(float *x, float *y, float *z);
 void vl6180x_init(void);
 int  vl6180x_read_distance(void);
+float sensors_pitch_deg(void);
 
 #ifdef __cplusplus
 }

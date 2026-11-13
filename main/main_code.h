@@ -19,7 +19,7 @@
 
 #define throttle_deadzone 40
 #define boost_max_amount 100
-#define jump_max_amount 400 //Max is 1000
+#define jump_max_amount 500 //Max is 1000 // prev 400
 #define jump_back_extra_amount 150
 #define jump_preload_amount 200
 #define wall_mode_amount 250
@@ -29,6 +29,13 @@
 // Wachttijden per stap (ms)
 #define JUMP_DELAY_STEP1_MS  200   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
 #define JUMP_DELAY_STEP2_MS  100   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
-#define JUMP_DELAY_STEP3_MS  300   // servo 2 en 3 terug -> daarna servo 0 terug
+#define JUMP_DELAY_STEP3_MS  350   // servo 2 en 3 terug -> daarna servo 0 terug prev 300
 #define JUMP_DELAY_STEP4_MS  100   // servo 0 terug -> daarna sprong voltooid
 #define JUMP_GROUND_GRACE    3000  // ms na laatste grondcontact dat springen mag
+
+#define PITCH_KP            6.0f    // us per graad fout
+#define PITCH_KI            0.5f    // us per graad per seconde
+#define PITCH_KD            1.5f    // us per graad per seconde
+#define PITCH_OUT_MAX_US    200     // maximale correctie
+#define PITCH_I_MAX_US      80      // anti-windup begrenzing
+#define PITCH_PID_SIGN      -1.0f    // -1.0f als de correctie de verkeerde kant op werkt
