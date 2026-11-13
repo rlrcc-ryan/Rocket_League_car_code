@@ -11,12 +11,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
  
-#define SERVO_MIN_US     500
+#define SERVO_MIN_US     0
 #define SERVO_CENTER_US  1500
+#define SERVO_MAX_US     2500
 #define SERVO_SWIVEL_CENTER_US 1400
 #define SERVO_SWIVEL_DOWN_US  2500
-#define SERVO_SWIVEL_UP_US  500
-#define SERVO_MAX_US     2500
+#define SERVO_SWIVEL_UP_US  300
+
  
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +26,7 @@ extern "C" {
 void servo_init(void);
 void servo_set_pulse(uint8_t servo, uint32_t pulse_us);
 uint32_t axisToPulse(int axis);
+void servo_set_reversed(uint8_t servo, bool reversed);
  
 #ifdef __cplusplus
 }

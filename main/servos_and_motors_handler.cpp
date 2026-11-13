@@ -9,6 +9,31 @@
 #define SERVO_DUTY_MAX   (1UL << 16)                    // 65536 stappen
 
 #define AXIS_DEADZONE 40
+
+// true = draairichting van deze servo/motor omgedraaid
+static bool servo_reversed[SERVO_COUNT] = {
+    false,   // servo 0
+    false,   // servo 1
+    true,   // servo 2
+    false,   // servo 3
+    false,   // servo 4
+    false    // servo 5
+};
+
+/**
+ * Draai de richting van één servo/motor om (of zet terug).
+ *
+ * @param servo    servo nummer 0..5
+ * @param reversed true = omgedraaid, false = normaal
+ */
+void servo_set_reversed(uint8_t servo, bool reversed)
+{
+    if (servo >= SERVO_COUNT) {
+        printf("Ongeldig servo nummer: %u\n", servo);
+        return;
+    }
+    servo_reversed[servo] = reversed;
+}
  
 // Pas deze GPIO's aan naar jouw bedrading (servo 0 t/m 5)
 static const int servo_gpio[SERVO_COUNT] = {
@@ -44,6 +69,14 @@ void servo_set_pulse(uint8_t servo, uint32_t pulse_us)
     // Begrens de puls om de servo te beschermen
     if (pulse_us < SERVO_MIN_US) pulse_us = SERVO_MIN_US;
     if (pulse_us > SERVO_MAX_US) pulse_us = SERVO_MAX_US;
+
+    // Draairichting omkeren: spiegelen rond de middenstand
+    if (servo_reversed[servo]) {
+        int32_t mirrored = 2 * (int32_t)SERVO_CENTER_US - (int32_t)pulse_us;
+        if (mirrored < (int32_t)SERVO_MIN_US) mirrored = SERVO_MIN_US;
+        if (mirrored > (int32_t)SERVO_MAX_US) mirrored = SERVO_MAX_US;
+        pulse_us = (uint32_t)mirrored;
+    }
 
     // Smoothing alleen voor servo 1
     if (servo == SMOOTH_SERVO_INDEX)

@@ -107,8 +107,8 @@ static void jump_update(uint32_t now) {
             break;
 
         case JUMP_STEP2:
-            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_max_amount + 130);
-            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_max_amount + 130);
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount);
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_max_amount);
             servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - jump_max_amount);
             jumpState = JUMP_STEP3;
@@ -396,7 +396,7 @@ void loop() {
         lastUpdate = now;
         
         // Geeft alleen de laatst opgeslagen waarde van de sensortaak terug
-        bool grounded = car_on_ground();
+        bool grounded = true;  // car_on_ground();
 
         if (grounded && !jump_active() && (now - lastJumpTime) > JUMP_RESET_LOCKOUT_MS) {
             jumpsUsed = 0;
