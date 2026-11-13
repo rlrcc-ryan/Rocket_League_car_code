@@ -16,6 +16,14 @@ static uint32_t lastUpdate = 0;
 
 enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3, JUMP_STEP4 };
 
+#define STEER_TRIM_STEP_US   5      // stapgrootte per druk op de dpad
+#define STEER_TRIM_MAX_US    350    // maximale trim in beide richtingen
+#define STEER_TRIM_DIR       1      // zet op -1 als links/rechts andersom staat
+
+static int  steerTrim = 0;          // huidige trim in us (negatief = links, positief = rechts)
+static bool lastDpadLeft = false;
+static bool lastDpadRight = false;
+
 static JumpState    jumpState = JUMP_IDLE;
 static uint32_t     jumpStepStart = 0;      // tijdstip waarop de huidige stap begon
 static bool         hasBeenOnGround = false;
@@ -51,9 +59,23 @@ struct ControlState {
     bool y = false;
     bool connected = false;
     uint32_t lastOnGround = 0;   // tijdstip van laatste grondcontact
+    bool dpad_left = false;
+    bool dpad_right = false;
 };
 
 static ControlState control;     // laatst bekende controllerwaarden
+
+// ============================================================
+// STUUR-TRIM (dpad links/rechts)
+// ============================================================
+
+// Stuurpuls inclusief trim, begrensd op het toegestane bereik
+static uint32_t steer_pulse(uint32_t base_us) {
+    int32_t p = (int32_t)base_us + steerTrim;
+    if (p < (int32_t)SERVO_MIN_US) p = SERVO_MIN_US;
+    if (p > (int32_t)SERVO_MAX_US) p = SERVO_MAX_US;
+    return (uint32_t)p;
+}
 
 // ============================================================
 // JUMP FUNCTIES
@@ -285,11 +307,13 @@ void onDisconnectedController(ControllerPtr ctl) {
     Y_toggle_state = false;
     lastY = false;
     wallModeWasOn = false;
+    lastDpadLeft = false;
+    lastDpadRight = false;
 
     // Lopende sprong afbreken en servo's veilig zetten
     jump_abort();
     servo_set_pulse(0, SERVO_SWIVEL_CENTER_US);
-    servo_set_pulse(1, SERVO_CENTER_US);
+    servo_set_pulse(1, steer_pulse(SERVO_CENTER_US));   // i.p.v. SERVO_CENTER_US
     servo_set_pulse(2, SERVO_CENTER_US);
     servo_set_pulse(3, SERVO_CENTER_US);
     servo_set_pulse(4, SERVO_CENTER_US);
@@ -351,6 +375,8 @@ void processGamepad(ControllerPtr ctl) {
     control.a             = ctl->a();
     control.b             = ctl->b();
     control.connected     = true;
+    control.dpad_left     = ctl->dpad() & DPAD_LEFT;
+    control.dpad_right    = ctl->dpad() & DPAD_RIGHT;
     // dumpGamepad(ctl);
 }
 
@@ -406,11 +432,25 @@ void loop() {
             hasBeenOnGround = true;
         }
 
-        // Sturen (servo 1)
+        // Trim aanpassen met dpad (alleen bij een NIEUWE druk)
+        if (control.dpad_left && !lastDpadLeft) {
+            steerTrim -= STEER_TRIM_DIR * STEER_TRIM_STEP_US;
+            steerTrim = constrain(steerTrim, -STEER_TRIM_MAX_US, STEER_TRIM_MAX_US);
+            Console.printf("Stuur-trim: %d us\n", steerTrim);
+        }
+        if (control.dpad_right && !lastDpadRight) {
+            steerTrim += STEER_TRIM_DIR * STEER_TRIM_STEP_US;
+            steerTrim = constrain(steerTrim, -STEER_TRIM_MAX_US, STEER_TRIM_MAX_US);
+            Console.printf("Stuur-trim: %d us\n", steerTrim);
+        }
+        lastDpadLeft  = control.dpad_left;
+        lastDpadRight = control.dpad_right;
+
+        // Sturen (servo 1), inclusief trim
         if (control.connected && grounded) {
-            servo_set_pulse(1, axisToPulse(control.x_axis));
+            servo_set_pulse(1, steer_pulse(axisToPulse(control.x_axis)));
         } else {
-            servo_set_pulse(1, SERVO_CENTER_US);
+            servo_set_pulse(1, steer_pulse(SERVO_CENTER_US));
         }
 
         // Springen met A, alleen bij een NIEUWE druk
