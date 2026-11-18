@@ -19,6 +19,7 @@ enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3, JUMP_STEP4 };
 #define STEER_TRIM_STEP_US   5      // stapgrootte per druk op de dpad
 #define STEER_TRIM_MAX_US    350    // maximale trim in beide richtingen
 #define STEER_TRIM_DIR       1      // zet op -1 als links/rechts andersom staat
+#define JUMP_MIN_GAP_MS   150
 
 static int  steerTrim = 0;          // huidige trim in us (negatief = links, positief = rechts)
 static bool lastDpadLeft = false;
@@ -148,21 +149,28 @@ static uint32_t jump_delay_ms(JumpState state) {
 }
 
 static void jump_start(uint32_t now) {
-    // Alleen starten als er niet al een sprong bezig is
-    if (jump_active()) return;
-
     // Maximaal 2 sprongen tot de auto weer op de grond staat
     if (jumpsUsed >= JUMP_MAX_COUNT) return;
 
     // Alleen springen als de auto de afgelopen 3 seconden de grond heeft geraakt
     if (!hasBeenOnGround || (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
 
+    // Tweede druk tijdens een lopende sprong: onderbreken, maar niet te snel na de eerste
+    bool interrupting = jump_active();
+    if (interrupting && (now - lastJumpTime) < JUMP_MIN_GAP_MS) return;
+
     jumpsUsed++;
     lastJumpTime = now;
     pid_reset(sensors_pitch_deg());   // huidige hoek is het doel
     servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+
     jumpState = JUMP_STEP1;
-    jumpStepStart = now;
+    if (interrupting) {
+        // Swivel staat al omhoog: direct door naar het oprollen, niet opnieuw wachten
+        jumpStepStart = now - (uint32_t)JUMP_DELAY_STEP1_MS;
+    } else {
+        jumpStepStart = now;
+    }
 }
 
 static void jump_update(uint32_t now) {

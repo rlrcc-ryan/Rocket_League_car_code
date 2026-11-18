@@ -19,9 +19,9 @@
 
 #define throttle_deadzone 40
 #define boost_max_amount 100
-#define jump_max_amount 500 //Max is 1000 // prev 400
-#define jump_back_extra_amount 150
-#define jump_preload_amount 200
+#define jump_max_amount 20 //Max is 1000 // prev 500
+#define jump_back_extra_amount 0 // Prev 150
+#define jump_preload_amount 20 //Prev 200
 #define wall_mode_amount 250
 #define WALL_BACK_EXTRA_US       300   // extra motorvermogen boven wall_mode_amount bij vol gas/rem
 #define WALL_SWIVEL_RANGE_US     200   // maximale swivel-uitslag t.o.v. SERVO_SWIVEL_DOWN_US
@@ -36,6 +36,6 @@
 #define PITCH_KP            6.0f    // us per graad fout
 #define PITCH_KI            0.5f    // us per graad per seconde
 #define PITCH_KD            1.5f    // us per graad per seconde
-#define PITCH_OUT_MAX_US    200     // maximale correctie
+#define PITCH_OUT_MAX_US    20     // maximale correctie prev 200
 #define PITCH_I_MAX_US      80      // anti-windup begrenzing
 #define PITCH_PID_SIGN      -1.0f    // -1.0f als de correctie de verkeerde kant op werkt
