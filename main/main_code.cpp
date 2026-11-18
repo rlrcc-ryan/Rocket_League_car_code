@@ -72,11 +72,14 @@ static ControlState control;     // laatst bekende controllerwaarden
 static float pitchSetpoint  = 0.0f;
 static float pidIntegral    = 0.0f;
 static float pidLastPitch   = 0.0f;
+static float u_smooth = 0.0f;
 
 static void pid_reset(float setpoint) {
     pitchSetpoint = setpoint;
     pidIntegral   = 0.0f;
     pidLastPitch  = setpoint;
+    u_smooth      = 0.0f;
+    pitchSetpoint = constrain(setpoint, -15.0f, 15.0f);
 }
 
 // Draait elke 20 ms; corrigeert de motoren zolang de sprong in de gasfase zit
@@ -86,6 +89,7 @@ static void jump_pitch_hold() {
     const float dt = 0.02f;
     float pitch = sensors_pitch_deg();
     float err   = pitchSetpoint - pitch;
+    if (fabsf(pitch) > 60.0f) { err = 0; }
 
     pidIntegral += PITCH_KI * err * dt;
     pidIntegral  = constrain(pidIntegral, -(float)PITCH_I_MAX_US, (float)PITCH_I_MAX_US);
@@ -169,7 +173,7 @@ static void jump_update(uint32_t now) {
 
     switch (jumpState) {
         case JUMP_STEP1:
-            //pid_reset(sensors_pitch_deg());
+            pid_reset(sensors_pitch_deg());
             servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_preload_amount);
             servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_preload_amount);
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_preload_amount);
