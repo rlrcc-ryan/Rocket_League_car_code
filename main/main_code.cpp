@@ -5,6 +5,17 @@
 #include "main_code.h"   // moet Arduino.h, Bluepad32.h, servos_and_motors_handler.h en sensor_handler.h includen
 
 // ============================================================
+// INSTELLINGEN VOOR TESTEN
+// ============================================================
+
+// 1 = doe alsof de auto altijd op de grond staat (sensor wordt genegeerd)
+// 0 = gebruik de echte sensor (car_on_ground())
+#define SIMULATE_GROUNDED   1
+
+// 1 = print elke 2 s de grootste vertraging tussen twee loop-rondes (om haperen te vinden)
+#define DEBUG_LOOP_GAP      1
+
+// ============================================================
 // TIMERS
 // ============================================================
 
@@ -19,25 +30,30 @@ enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3 };
 #define STEER_TRIM_STEP_US   5      // stapgrootte per druk op de dpad
 #define STEER_TRIM_MAX_US    350    // maximale trim in beide richtingen
 #define STEER_TRIM_DIR       1      // zet op -1 als links/rechts andersom staat
-#define JUMP_MIN_GAP_MS   150
+#define JUMP_MIN_GAP_MS      150
+
+#define SWIVEL_SETTLE_MS   200      // tijd die de swivel krijgt voordat de motoren mogen starten
+
+static uint32_t swivelMovedAt = 0;  // tijdstip waarop de swivel de opdracht kreeg om omhoog te gaan
 
 static int  steerTrim = 0;          // huidige trim in us (negatief = links, positief = rechts)
 static bool lastDpadLeft = false;
 static bool lastDpadRight = false;
 
 static JumpState    jumpState = JUMP_IDLE;
-static uint32_t     jumpStepStart = 0;      // tijdstip waarop de huidige stap begon
+static uint32_t     jumpStepStart = 0;       // tijdstip waarop de huidige stap begon
 static bool         hasBeenOnGround = false;
-static bool         lastA = false;          // voor het detecteren van een nieuwe knopdruk
-static bool         Y_toggle_state = false;          // voor het detecteren van een nieuwe knopdruk
-static bool         lastY = false;          // voor het detecteren van een nieuwe knopdruk
+static bool         lastA = false;           // voor het detecteren van een nieuwe knopdruk
+static bool         Y_toggle_state = false;  // wall mode aan/uit
+static bool         lastY = false;           // voor het detecteren van een nieuwe knopdruk
 static bool         wallModeWasOn = false;   // om één keer terug te zetten bij uitschakelen
 
 static uint8_t  jumpsUsed = 0;          // aantal sprongen sinds het laatste grondcontact
 static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong startte
 
 #define JUMP_MAX_COUNT          2       // eerste sprong + double jump
-#define JUMP_RESET_LOCKOUT_MS   500     // zolang na een sprong de teller niet gereset mag worden
+#define JUMP_RESET_LOCKOUT_MS   700     // zolang na een sprong de teller niet gereset mag worden
+#define DOUBLE_JUMP_WINDOW_MS    1000
 
 // FRONTFLIP / BACKFLIP
 #define FLIP_JOYSTICK_DEADZONE  180
@@ -47,8 +63,6 @@ static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong sta
 enum FlipDirection { FLIP_NONE, FLIP_FRONT, FLIP_BACK };
 static FlipDirection activeFlip = FLIP_NONE;
 static uint32_t flipStartTime = 0;
-
-
 
 // ============================================================
 // CONTROLLER STATUS
@@ -76,6 +90,23 @@ struct ControlState {
 static ControlState control;     // laatst bekende controllerwaarden
 
 // ============================================================
+// HULPFUNCTIES
+// ============================================================
+
+static bool jump_active() {
+    return jumpState != JUMP_IDLE;
+}
+
+// Sprong of flip bezig: de normale besturing mag de motoren/swivel dan niet aanraken
+static bool motors_busy() {
+    return jump_active() || activeFlip != FLIP_NONE;
+}
+
+static bool swivel_settled(uint32_t now) {
+    return (now - swivelMovedAt) >= SWIVEL_SETTLE_MS;
+}
+
+// ============================================================
 // PID: hoek vasthouden tijdens de sprong
 // ============================================================
 
@@ -92,14 +123,11 @@ static void pid_reset(float setpoint) {
     pitchSetpoint = constrain(setpoint, -15.0f, 15.0f);
 }
 
-static bool jump_active() {
-    return jumpState != JUMP_IDLE;
-}
-
 // Draait elke 20 ms; corrigeert de motoren zolang de sprong in de gasfase zit
 static void jump_pitch_hold() {
     if (activeFlip != FLIP_NONE) return;  // flip heeft tijdelijk motorprioriteit
     if (jumpState != JUMP_STEP2 && jumpState != JUMP_STEP3) return;
+    if (!swivel_settled(millis())) return;
 
     const float dt = 0.02f;
     float pitch = sensors_pitch_deg();
@@ -118,8 +146,8 @@ static void jump_pitch_hold() {
 
     int back_base, front_base;
     if (jumpState == JUMP_STEP2) {            // preload-fase
-        back_base  = SERVO_CENTER_US + jump_preload_amount;
-        front_base = SERVO_CENTER_US - jump_preload_amount;
+        back_base  = SERVO_CENTER_US;
+        front_base = SERVO_CENTER_US;
     } else {                                  // maximale-gasfase
         back_base  = SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount;
         front_base = SERVO_CENTER_US - jump_max_amount;
@@ -132,12 +160,16 @@ static void jump_pitch_hold() {
     servo_set_pulse(SERVO_FRONT_2, front_base - corr);
 }
 
+// ============================================================
+// FLIP
+// ============================================================
+
 // Tijdens een flip krijgen de motorcommando's hieronder tijdelijk prioriteit.
 // Bluepad32: axisY negatief = joystick naar voren, positief = naar achteren.
 static void flip_update(uint32_t now) {
     if (activeFlip == FLIP_NONE) return;
- 
-     if (now - flipStartTime >= FLIP_DURATION_MS) {
+
+    if (now - flipStartTime >= FLIP_DURATION_MS) {
         activeFlip = FLIP_NONE;
         if (!jump_active()) {
             // Sprong is al klaar: alles terug naar neutraal
@@ -150,17 +182,21 @@ static void flip_update(uint32_t now) {
         return;  // anders neemt de normale sprong/PID-regeling het over
     }
 
+    // Let op: de voorste motoren staan hier BOVEN het midden, terwijl de sprong ze
+    // ONDER het midden zet (SERVO_CENTER_US - jump_max_amount). Controleer of dat bedoeld is.
     const int base = SERVO_CENTER_US + jump_max_amount;
     int frontPulse = base;
     int backPulse = base;
 
     if (activeFlip == FLIP_FRONT) {
-        backPulse += FLIP_TORQUE_US;   // achter harder = neus naar voren
+        backPulse -= FLIP_TORQUE_US;   // achter harder = neus naar voren
     } else if (activeFlip == FLIP_BACK) {
         frontPulse -= FLIP_TORQUE_US;  // voor harder = neus naar achteren
     }
 
     servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+    if (!swivel_settled(now)) return;   // motoren pas als de swivel klaar is
+
     servo_set_pulse(SERVO_FRONT_1, frontPulse);
     servo_set_pulse(SERVO_FRONT_2, frontPulse);
     servo_set_pulse(SERVO_BACK_1, backPulse);
@@ -183,8 +219,6 @@ static uint32_t steer_pulse(uint32_t base_us) {
 // JUMP FUNCTIES
 // ============================================================
 
-
-
 static uint32_t jump_delay_ms(JumpState state) {
     switch (state) {
         case JUMP_STEP1: return JUMP_DELAY_STEP1_MS;
@@ -197,7 +231,6 @@ static uint32_t jump_delay_ms(JumpState state) {
 static void jump_start(uint32_t now) {
     // Maximaal 2 sprongen tot de auto weer op de grond staat
     if (jumpsUsed >= JUMP_MAX_COUNT) return;
-
 
     // Alleen springen als de auto de afgelopen 3 seconden de grond heeft geraakt
     if (!hasBeenOnGround || (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
@@ -222,10 +255,13 @@ static void jump_start(uint32_t now) {
     pid_reset(sensors_pitch_deg());   // huidige hoek is het doel
     servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
 
+    // De wachttijd loopt vanaf de EERSTE opdracht om omhoog te gaan. Bij een snelle
+    // tweede druk blijft dat tijdstip dus staan en wacht de sprong de resterende tijd af.
+    if (!interrupting) swivelMovedAt = now;
+
     jumpState = JUMP_STEP1;
     if (interrupting) {
-        // Swivel staat al omhoog: direct door naar het oprollen, niet opnieuw wachten
-        jumpStepStart = now - (uint32_t)JUMP_DELAY_STEP1_MS;
+        jumpStepStart = now - (uint32_t)JUMP_DELAY_STEP1_MS;   // wachttijd van de stap overslaan
     } else {
         jumpStepStart = now;
     }
@@ -233,17 +269,22 @@ static void jump_start(uint32_t now) {
 
 static void jump_update(uint32_t now) {
     if (!jump_active()) return;
-    if (now - jumpStepStart < jump_delay_ms(jumpState)) return;   // stap nog niet klaar
+
+    // Geen enkel motorcommando zolang de swivel nog onderweg is
+    if (!swivel_settled(now)) return;
+
+    if (now - jumpStepStart < jump_delay_ms(jumpState)) return;    // stap nog niet klaar
 
     jumpStepStart = now;
 
     switch (jumpState) {
         case JUMP_STEP1:
             pid_reset(sensors_pitch_deg());
-            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_preload_amount);
-            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_preload_amount);
-            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_preload_amount);
-            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - jump_preload_amount);
+            servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
             jumpState = JUMP_STEP2;
             break;
 
@@ -263,7 +304,7 @@ static void jump_update(uint32_t now) {
             servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
             jumpState = JUMP_IDLE;
             break;
-            
+
         default:
             break;
     }
@@ -304,7 +345,7 @@ void throttle_control(bool grounded, int right_trigger, int left_trigger, bool r
 // AIR CONTROL FUNCTIONS
 // ============================================================
 
-void air_control(bool grounded, int left_bumper, bool right_bumper, 
+void air_control(bool grounded, int left_bumper, bool right_bumper,
     int joystick_x, int joystick_y, bool x_button, bool b_button)
 {
     static int boost_value = 0;
@@ -327,14 +368,13 @@ void air_control(bool grounded, int left_bumper, bool right_bumper,
         servo_set_pulse(SERVO_BACK_1,  SERVO_CENTER_US + boost_value - roll);
         servo_set_pulse(SERVO_BACK_2,  SERVO_CENTER_US + boost_value + roll);
     } else {
-        // Geen LB: pitch + yaw met de voorste motoren
+        // Geen LB: yaw met de voorste motoren
         int yaw = joystick_x * FRONT_TORQUE_US / 512;
-        int pitch = joystick_y * FRONT_STRENGTH_US / 512;
 
         servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US + yaw);
         servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - yaw);
 
-        // X / Y: roll links / rechts met de achterste motoren (+ boost)
+        // X / B: roll links / rechts met de achterste motoren (+ boost)
         int roll = 0;
         if (x_button)      roll = -BACK_TORQUE_US;
         else if (b_button) roll =  BACK_TORQUE_US;
@@ -429,7 +469,7 @@ void onDisconnectedController(ControllerPtr ctl) {
     // Lopende sprong afbreken en servo's veilig zetten
     jump_abort();
     servo_set_pulse(0, SERVO_SWIVEL_CENTER_US);
-    servo_set_pulse(1, steer_pulse(SERVO_CENTER_US));   // i.p.v. SERVO_CENTER_US
+    servo_set_pulse(1, steer_pulse(SERVO_CENTER_US));
     servo_set_pulse(2, SERVO_CENTER_US);
     servo_set_pulse(3, SERVO_CENTER_US);
     servo_set_pulse(4, SERVO_CENTER_US);
@@ -514,7 +554,7 @@ void processControllers() {
 void setup() {
     Console.printf("Firmware: %s\n", BP32.firmwareVersion());
     const uint8_t* addr = BP32.localBdAddress();
-    Console.printf("BD Addr: %2X:%2X:%2X:%2X:%2X:%2X\n",
+    Console.printf("BD Addr: %02X:%02X:%02X:%02X:%02X:%02X\n",
                    addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
     bool startScanning = true;
@@ -534,11 +574,29 @@ void loop() {
     processControllers();     // vult alleen de globale controlvariabelen
 
     uint32_t now = millis();
+
+#if DEBUG_LOOP_GAP
+    {
+        static uint32_t lastLoop = 0, maxGap = 0, lastReport = 0;
+        if (now - lastLoop > maxGap) maxGap = now - lastLoop;
+        lastLoop = now;
+        if (now - lastReport >= 2000) {
+            //Console.printf("max loop-gap: %u ms\n", (unsigned)maxGap);
+            maxGap = 0;
+            lastReport = now;
+        }
+    }
+#endif
+
+    // Tijdkritisch: elke ronde uitvoeren, niet pas op de volgende 20 ms-tik.
+    jump_update(now);
+    flip_update(now);
+
     if (now - lastUpdate >= 20) {   // 50 Hz
         lastUpdate = now;
-        
+
         // Geeft alleen de laatst opgeslagen waarde van de sensortaak terug
-        bool grounded = true;  // car_on_ground();
+        bool grounded = SIMULATE_GROUNDED ? true : car_on_ground();
 
         if (grounded && !jump_active() && (now - lastJumpTime) > JUMP_RESET_LOCKOUT_MS) {
             jumpsUsed = 0;
@@ -552,12 +610,12 @@ void loop() {
         if (control.dpad_left && !lastDpadLeft) {
             steerTrim -= STEER_TRIM_DIR * STEER_TRIM_STEP_US;
             steerTrim = constrain(steerTrim, -STEER_TRIM_MAX_US, STEER_TRIM_MAX_US);
-            Console.printf("Stuur-trim: %d us\n", steerTrim);
+            //Console.printf("Stuur-trim: %d us\n", steerTrim);
         }
         if (control.dpad_right && !lastDpadRight) {
             steerTrim += STEER_TRIM_DIR * STEER_TRIM_STEP_US;
             steerTrim = constrain(steerTrim, -STEER_TRIM_MAX_US, STEER_TRIM_MAX_US);
-            Console.printf("Stuur-trim: %d us\n", steerTrim);
+            //Console.printf("Stuur-trim: %d us\n", steerTrim);
         }
         lastDpadLeft  = control.dpad_left;
         lastDpadRight = control.dpad_right;
@@ -575,19 +633,17 @@ void loop() {
         }
         lastA = control.a;
 
-        jump_update(now);
         jump_pitch_hold();
-        flip_update(now);   // flip overschrijft tijdelijk de normale motorcommando's
 
-    
-        if (control.y && !lastY) {              // Y is net ingedrukt
-            Y_toggle_state = !Y_toggle_state;   // true wordt false, false wordt true
+        // Wall mode aan/uit met Y (alleen bij een NIEUWE druk)
+        if (control.y && !lastY) {
+            Y_toggle_state = !Y_toggle_state;
         }
         lastY = control.y;
 
         if (Y_toggle_state) {
-            // WALL MODE AAN (niet tijdens een sprong, anders overschrijft hij de sprong)
-            if (!jump_active()) {
+            // WALL MODE AAN (niet tijdens een sprong of flip, anders overschrijft hij die)
+            if (!motors_busy()) {
                 wall_mode(grounded, true, control.right_trigger, control.left_trigger);
             }
             wallModeWasOn = true;
@@ -599,8 +655,12 @@ void loop() {
                 wallModeWasOn = false;
             }
 
-            // Gas en luchtbesturing alleen als er niet gesprongen wordt
-            if (!jump_active()) {
+            // Swivel elke 20 ms opnieuw bevestigen: omhoog tijdens sprong/flip, anders midden.
+            // Zo blijft hij nooit hangen als een overgang is gemist.
+            servo_set_pulse(SERVO_SWIVEL, motors_busy() ? SERVO_SWIVEL_UP_US : SERVO_SWIVEL_CENTER_US);
+
+            // Gas en luchtbesturing alleen als er niet gesprongen of geflipt wordt
+            if (!motors_busy()) {
                 throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
                 air_control(grounded, control.left_bumper, control.right_bumper,
                             control.x_axis, control.y_axis, control.x, control.b);

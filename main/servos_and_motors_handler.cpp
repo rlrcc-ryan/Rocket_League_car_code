@@ -12,12 +12,12 @@
 
 // true = draairichting van deze servo/motor omgedraaid
 static bool servo_reversed[SERVO_COUNT] = {
-    false,   // servo 0
-    false,   // servo 1
-    true,   // servo 2
-    false,   // servo 3
-    false,   // servo 4
-    false    // servo 5
+    false,   // swivel
+    false,   // stuur
+    false,   // motor achter onder
+    false,   // motor voor boven
+    false,   // motor voor onder
+    true    // motor achter boven
 };
 
 /**

@@ -19,15 +19,14 @@
 
 #define throttle_deadzone 40
 #define boost_max_amount 100
-#define jump_max_amount 20 //Max is 1000 // prev 500
-#define jump_back_extra_amount 0 // Prev 150
-#define jump_preload_amount 20 //Prev 200
+#define jump_max_amount 300 //Max is 1000 // prev 500
+#define jump_back_extra_amount 150 // Prev 150
 #define wall_mode_amount 250
 #define WALL_BACK_EXTRA_US       300   // extra motorvermogen boven wall_mode_amount bij vol gas/rem
 #define WALL_SWIVEL_RANGE_US     200   // maximale swivel-uitslag t.o.v. SERVO_SWIVEL_DOWN_US
 
 // Wachttijden per stap (ms)
-#define JUMP_DELAY_STEP1_MS  200   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
+#define JUMP_DELAY_STEP1_MS  100   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
 #define JUMP_DELAY_STEP2_MS  350   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
 #define JUMP_DELAY_STEP3_MS  100   // servo 2 en 3 terug -> daarna servo 0 terug prev 300
 #define JUMP_GROUND_GRACE    3000  // ms na laatste grondcontact dat springen mag
