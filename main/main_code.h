@@ -28,9 +28,8 @@
 
 // Wachttijden per stap (ms)
 #define JUMP_DELAY_STEP1_MS  200   // servo 0 omhoog -> daarna servo 2 en 3 omhoog
-#define JUMP_DELAY_STEP2_MS  100   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
-#define JUMP_DELAY_STEP3_MS  350   // servo 2 en 3 terug -> daarna servo 0 terug prev 300
-#define JUMP_DELAY_STEP4_MS  100   // servo 0 terug -> daarna sprong voltooid
+#define JUMP_DELAY_STEP2_MS  350   // servo 2 en 3 omhoog -> daarna 2 en 3 terug
+#define JUMP_DELAY_STEP3_MS  100   // servo 2 en 3 terug -> daarna servo 0 terug prev 300
 #define JUMP_GROUND_GRACE    3000  // ms na laatste grondcontact dat springen mag
 
 #define PITCH_KP            6.0f    // us per graad fout

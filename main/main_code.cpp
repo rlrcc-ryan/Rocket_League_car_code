@@ -14,7 +14,7 @@ static uint32_t lastUpdate = 0;
 // JUMP TOESTANDSMACHINE
 // ============================================================
 
-enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3, JUMP_STEP4 };
+enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3 };
 
 #define STEER_TRIM_STEP_US   5      // stapgrootte per druk op de dpad
 #define STEER_TRIM_MAX_US    350    // maximale trim in beide richtingen
@@ -38,6 +38,15 @@ static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong sta
 
 #define JUMP_MAX_COUNT          2       // eerste sprong + double jump
 #define JUMP_RESET_LOCKOUT_MS   500     // zolang na een sprong de teller niet gereset mag worden
+
+// FRONTFLIP / BACKFLIP
+#define FLIP_JOYSTICK_DEADZONE  180
+#define FLIP_DURATION_MS        400
+#define FLIP_TORQUE_US          50
+
+enum FlipDirection { FLIP_NONE, FLIP_FRONT, FLIP_BACK };
+static FlipDirection activeFlip = FLIP_NONE;
+static uint32_t flipStartTime = 0;
 
 
 
@@ -83,8 +92,13 @@ static void pid_reset(float setpoint) {
     pitchSetpoint = constrain(setpoint, -15.0f, 15.0f);
 }
 
+static bool jump_active() {
+    return jumpState != JUMP_IDLE;
+}
+
 // Draait elke 20 ms; corrigeert de motoren zolang de sprong in de gasfase zit
 static void jump_pitch_hold() {
+    if (activeFlip != FLIP_NONE) return;  // flip heeft tijdelijk motorprioriteit
     if (jumpState != JUMP_STEP2 && jumpState != JUMP_STEP3) return;
 
     const float dt = 0.02f;
@@ -118,6 +132,41 @@ static void jump_pitch_hold() {
     servo_set_pulse(SERVO_FRONT_2, front_base - corr);
 }
 
+// Tijdens een flip krijgen de motorcommando's hieronder tijdelijk prioriteit.
+// Bluepad32: axisY negatief = joystick naar voren, positief = naar achteren.
+static void flip_update(uint32_t now) {
+    if (activeFlip == FLIP_NONE) return;
+ 
+     if (now - flipStartTime >= FLIP_DURATION_MS) {
+        activeFlip = FLIP_NONE;
+        if (!jump_active()) {
+            // Sprong is al klaar: alles terug naar neutraal
+            servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US);
+            servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
+        }
+        return;  // anders neemt de normale sprong/PID-regeling het over
+    }
+
+    const int base = SERVO_CENTER_US + jump_max_amount;
+    int frontPulse = base;
+    int backPulse = base;
+
+    if (activeFlip == FLIP_FRONT) {
+        backPulse += FLIP_TORQUE_US;   // achter harder = neus naar voren
+    } else if (activeFlip == FLIP_BACK) {
+        frontPulse -= FLIP_TORQUE_US;  // voor harder = neus naar achteren
+    }
+
+    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+    servo_set_pulse(SERVO_FRONT_1, frontPulse);
+    servo_set_pulse(SERVO_FRONT_2, frontPulse);
+    servo_set_pulse(SERVO_BACK_1, backPulse);
+    servo_set_pulse(SERVO_BACK_2, backPulse);
+}
+
 // ============================================================
 // STUUR-TRIM (dpad links/rechts)
 // ============================================================
@@ -134,16 +183,13 @@ static uint32_t steer_pulse(uint32_t base_us) {
 // JUMP FUNCTIES
 // ============================================================
 
-static bool jump_active() {
-    return jumpState != JUMP_IDLE;
-}
+
 
 static uint32_t jump_delay_ms(JumpState state) {
     switch (state) {
         case JUMP_STEP1: return JUMP_DELAY_STEP1_MS;
         case JUMP_STEP2: return JUMP_DELAY_STEP2_MS;
         case JUMP_STEP3: return JUMP_DELAY_STEP3_MS;
-        case JUMP_STEP4: return JUMP_DELAY_STEP4_MS;
         default:         return 0;
     }
 }
@@ -152,12 +198,24 @@ static void jump_start(uint32_t now) {
     // Maximaal 2 sprongen tot de auto weer op de grond staat
     if (jumpsUsed >= JUMP_MAX_COUNT) return;
 
+
     // Alleen springen als de auto de afgelopen 3 seconden de grond heeft geraakt
     if (!hasBeenOnGround || (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
 
     // Tweede druk tijdens een lopende sprong: onderbreken, maar niet te snel na de eerste
     bool interrupting = jump_active();
     if (interrupting && (now - lastJumpTime) < JUMP_MIN_GAP_MS) return;
+
+    // Alleen bij de tweede sprong bepaalt de linker joystick de fliprichting.
+    activeFlip = FLIP_NONE;
+    if (jumpsUsed == 1) {
+        if (control.y_axis < -FLIP_JOYSTICK_DEADZONE) {
+            activeFlip = FLIP_FRONT;       // joystick naar voren
+        } else if (control.y_axis > FLIP_JOYSTICK_DEADZONE) {
+            activeFlip = FLIP_BACK;        // joystick naar achteren
+        }
+        if (activeFlip != FLIP_NONE) flipStartTime = now;
+    }
 
     jumpsUsed++;
     lastJumpTime = now;
@@ -202,10 +260,6 @@ static void jump_update(uint32_t now) {
             servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
             servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
-            jumpState = JUMP_STEP4;
-            break;
-
-        case JUMP_STEP4:
             servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
             jumpState = JUMP_IDLE;
             break;
@@ -365,6 +419,7 @@ void onDisconnectedController(ControllerPtr ctl) {
     hasBeenOnGround = false;
     lastA = false;
     jumpsUsed = 0;
+    activeFlip = FLIP_NONE;
     Y_toggle_state = false;
     lastY = false;
     wallModeWasOn = false;
@@ -522,6 +577,7 @@ void loop() {
 
         jump_update(now);
         jump_pitch_hold();
+        flip_update(now);   // flip overschrijft tijdelijk de normale motorcommando's
 
     
         if (control.y && !lastY) {              // Y is net ingedrukt
