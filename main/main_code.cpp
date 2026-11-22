@@ -30,11 +30,14 @@ enum JumpState { JUMP_IDLE, JUMP_STEP1, JUMP_STEP2, JUMP_STEP3 };
 #define STEER_TRIM_STEP_US   5      // stapgrootte per druk op de dpad
 #define STEER_TRIM_MAX_US    350    // maximale trim in beide richtingen
 #define STEER_TRIM_DIR       1      // zet op -1 als links/rechts andersom staat
-#define JUMP_MIN_GAP_MS      150
+#define DOUBLE_JUMP_WINDOW_MS   2000   // tweede druk moet binnen 2 seconden na de eerste druk komen
 
 #define SWIVEL_SETTLE_MS   200      // tijd die de swivel krijgt voordat de motoren mogen starten
 
 static uint32_t swivelMovedAt = 0;  // tijdstip waarop de swivel de opdracht kreeg om omhoog te gaan
+static bool swivelUpCommanded = false; // voorkomt onnodig opnieuw aansturen van de swivel
+static bool firstJumpReleaseSeen = false; // eerste jump-knop is losgelaten
+static uint32_t firstJumpStartedAt = 0; // tijdstip van de eerste druk
 
 static int  steerTrim = 0;          // huidige trim in us (negatief = links, positief = rechts)
 static bool lastDpadLeft = false;
@@ -52,17 +55,18 @@ static uint8_t  jumpsUsed = 0;          // aantal sprongen sinds het laatste gro
 static uint32_t lastJumpTime = 0;       // tijdstip waarop de laatste sprong startte
 
 #define JUMP_MAX_COUNT          2       // eerste sprong + double jump
-#define JUMP_RESET_LOCKOUT_MS   700     // zolang na een sprong de teller niet gereset mag worden
-#define DOUBLE_JUMP_WINDOW_MS    1000
+#define JUMP_RESET_LOCKOUT_MS  2300     // pas resetten nadat het double-jumpvenster voorbij is
 
 // FRONTFLIP / BACKFLIP
 #define FLIP_JOYSTICK_DEADZONE  180
-#define FLIP_DURATION_MS        400
-#define FLIP_TORQUE_US          50
+#define FLIP_DURATION_MS        600
+#define FLIP_TORQUE_US          300
+#define ALT_FLIP_TORQUE_US      50
 
 enum FlipDirection { FLIP_NONE, FLIP_FRONT, FLIP_BACK };
 static FlipDirection activeFlip = FLIP_NONE;
 static uint32_t flipStartTime = 0;
+static bool flipPulseStarted = false;
 
 // ============================================================
 // CONTROLLER STATUS
@@ -169,38 +173,44 @@ static void jump_pitch_hold() {
 static void flip_update(uint32_t now) {
     if (activeFlip == FLIP_NONE) return;
 
+    // De pulsduur begint pas nadat de swivel daadwerkelijk boven staat.
+    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+    if (!swivel_settled(now)) return;
+
+    if (!flipPulseStarted) {
+        flipStartTime = now;
+        flipPulseStarted = true;
+    }
+
     if (now - flipStartTime >= FLIP_DURATION_MS) {
         activeFlip = FLIP_NONE;
+        flipPulseStarted = false;
         if (!jump_active()) {
-            // Sprong is al klaar: alles terug naar neutraal
+            swivelUpCommanded = false;
+            // Dodge klaar: swivel en alle motoren terug naar neutraal.
             servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
             servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
             servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US);
             servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
         }
-        return;  // anders neemt de normale sprong/PID-regeling het over
+        return;
     }
 
-    // Let op: de voorste motoren staan hier BOVEN het midden, terwijl de sprong ze
-    // ONDER het midden zet (SERVO_CENTER_US - jump_max_amount). Controleer of dat bedoeld is.
-    const int base = SERVO_CENTER_US + jump_max_amount;
-    int frontPulse = base;
-    int backPulse = base;
-
+    // Alleen de motoren aan de gekozen kant krijgen een puls.
     if (activeFlip == FLIP_FRONT) {
-        backPulse -= FLIP_TORQUE_US;   // achter harder = neus naar voren
-    } else if (activeFlip == FLIP_BACK) {
-        frontPulse -= FLIP_TORQUE_US;  // voor harder = neus naar achteren
+        // Linker joystick naar voren: achterste motoren geven de sprongpuls.
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - ALT_FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - ALT_FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount + FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + jump_max_amount + jump_back_extra_amount + FLIP_TORQUE_US);
+    } else { // FLIP_BACK
+        // Linker joystick naar achteren: voorste motoren geven de sprongpuls.
+        servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US + ALT_FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US + ALT_FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US - jump_max_amount - FLIP_TORQUE_US);
+        servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US - jump_max_amount - FLIP_TORQUE_US);
     }
-
-    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
-    if (!swivel_settled(now)) return;   // motoren pas als de swivel klaar is
-
-    servo_set_pulse(SERVO_FRONT_1, frontPulse);
-    servo_set_pulse(SERVO_FRONT_2, frontPulse);
-    servo_set_pulse(SERVO_BACK_1, backPulse);
-    servo_set_pulse(SERVO_BACK_2, backPulse);
 }
 
 // ============================================================
@@ -229,42 +239,55 @@ static uint32_t jump_delay_ms(JumpState state) {
 }
 
 static void jump_start(uint32_t now) {
-    // Maximaal 2 sprongen tot de auto weer op de grond staat
+    // Alleen twee afzonderlijke druk-events tellen: eerst indrukken, loslaten,
+    // en daarna opnieuw indrukken. Een knop die vastgehouden wordt telt niet dubbel.
     if (jumpsUsed >= JUMP_MAX_COUNT) return;
 
-    // Alleen springen als de auto de afgelopen 3 seconden de grond heeft geraakt
-    if (!hasBeenOnGround || (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
-
-    // Tweede druk tijdens een lopende sprong: onderbreken, maar niet te snel na de eerste
-    bool interrupting = jump_active();
-    if (interrupting && (now - lastJumpTime) < JUMP_MIN_GAP_MS) return;
-
-    // Alleen bij de tweede sprong bepaalt de linker joystick de fliprichting.
-    activeFlip = FLIP_NONE;
-    if (jumpsUsed == 1) {
-        if (control.y_axis < -FLIP_JOYSTICK_DEADZONE) {
-            activeFlip = FLIP_FRONT;       // joystick naar voren
-        } else if (control.y_axis > FLIP_JOYSTICK_DEADZONE) {
-            activeFlip = FLIP_BACK;        // joystick naar achteren
-        }
-        if (activeFlip != FLIP_NONE) flipStartTime = now;
-    }
-
-    jumpsUsed++;
-    lastJumpTime = now;
-    pid_reset(sensors_pitch_deg());   // huidige hoek is het doel
-    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
-
-    // De wachttijd loopt vanaf de EERSTE opdracht om omhoog te gaan. Bij een snelle
-    // tweede druk blijft dat tijdstip dus staan en wacht de sprong de resterende tijd af.
-    if (!interrupting) swivelMovedAt = now;
-
-    jumpState = JUMP_STEP1;
-    if (interrupting) {
-        jumpStepStart = now - (uint32_t)JUMP_DELAY_STEP1_MS;   // wachttijd van de stap overslaan
+    // Eerste sprong: alleen starten na recent grondcontact.
+    if (jumpsUsed == 0) {
+        if (!hasBeenOnGround ||
+            (now - control.lastOnGround) >= JUMP_GROUND_GRACE) return;
+        firstJumpReleaseSeen = false;
+        firstJumpStartedAt = now;
     } else {
-        jumpStepStart = now;
+        // Tweede sprong kan alleen na loslaten en binnen 2 seconden na de eerste druk.
+        if (!firstJumpReleaseSeen) return;
+        if ((now - firstJumpStartedAt) > DOUBLE_JUMP_WINDOW_MS) return;
     }
+
+    const bool secondJump = (jumpsUsed == 1);
+    activeFlip = FLIP_NONE;
+
+    // Richting op het moment van de tweede druk bepaalt de dodge/flip.
+    if (secondJump) {
+        if (control.y_axis < -FLIP_JOYSTICK_DEADZONE) {
+            activeFlip = FLIP_FRONT;
+        } else if (control.y_axis > FLIP_JOYSTICK_DEADZONE) {
+            activeFlip = FLIP_BACK;
+        }
+    }
+
+    ++jumpsUsed;
+    lastJumpTime = now;
+
+    // De swivel blijft omhoog tijdens de sprong. Alleen opnieuw bewegen als
+    // hij na de eerste sequentie alweer naar het midden was gestuurd.
+    if (!swivelUpCommanded) {
+        swivelMovedAt = now;
+        swivelUpCommanded = true;
+        servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+    }
+
+    if (activeFlip != FLIP_NONE) {
+        flipPulseStarted = false;
+        jumpState = JUMP_IDLE;
+        return;
+    }
+
+    // De tweede druk start een nieuwe, afzonderlijke motorpuls-sequentie.
+    pid_reset(sensors_pitch_deg());
+    jumpState = JUMP_STEP1;
+    jumpStepStart = now;
 }
 
 static void jump_update(uint32_t now) {
@@ -302,6 +325,7 @@ static void jump_update(uint32_t now) {
             servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
             servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
             servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+            swivelUpCommanded = false;
             jumpState = JUMP_IDLE;
             break;
 
@@ -313,11 +337,14 @@ static void jump_update(uint32_t now) {
 // Breekt een lopende sprong af en zet de servo's terug in het midden
 static void jump_abort() {
     jumpState = JUMP_IDLE;
-    servo_set_pulse(0, SERVO_SWIVEL_CENTER_US);
-    servo_set_pulse(2, SERVO_CENTER_US);
-    servo_set_pulse(3, SERVO_CENTER_US);
-    servo_set_pulse(4, SERVO_CENTER_US);
-    servo_set_pulse(5, SERVO_CENTER_US);
+    activeFlip = FLIP_NONE;
+
+    servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
+    swivelUpCommanded = false;
+    servo_set_pulse(SERVO_BACK_1, SERVO_CENTER_US);
+    servo_set_pulse(SERVO_BACK_2, SERVO_CENTER_US);
+    servo_set_pulse(SERVO_FRONT_1, SERVO_CENTER_US);
+    servo_set_pulse(SERVO_FRONT_2, SERVO_CENTER_US);
 }
 
 // ============================================================
@@ -459,7 +486,11 @@ void onDisconnectedController(ControllerPtr ctl) {
     hasBeenOnGround = false;
     lastA = false;
     jumpsUsed = 0;
+    firstJumpReleaseSeen = false;
+    firstJumpStartedAt = 0;
+    swivelUpCommanded = false;
     activeFlip = FLIP_NONE;
+    flipPulseStarted = false;
     Y_toggle_state = false;
     lastY = false;
     wallModeWasOn = false;
@@ -598,8 +629,11 @@ void loop() {
         // Geeft alleen de laatst opgeslagen waarde van de sensortaak terug
         bool grounded = SIMULATE_GROUNDED ? true : car_on_ground();
 
-        if (grounded && !jump_active() && (now - lastJumpTime) > JUMP_RESET_LOCKOUT_MS) {
+        if (grounded && !motors_busy() &&
+            (now - lastJumpTime) > JUMP_RESET_LOCKOUT_MS) {
             jumpsUsed = 0;
+            firstJumpReleaseSeen = false;
+            firstJumpStartedAt = 0;
         }
         if (grounded) {
             control.lastOnGround = now;
@@ -631,6 +665,10 @@ void loop() {
         if (control.a && !lastA) {
             jump_start(now);
         }
+        // De tweede sprongtimer begint pas bij het loslaten van de eerste druk.
+        if (!control.a && lastA && jumpsUsed == 1 && !firstJumpReleaseSeen) {
+            firstJumpReleaseSeen = true;
+        }
         lastA = control.a;
 
         jump_pitch_hold();
@@ -641,30 +679,41 @@ void loop() {
         }
         lastY = control.y;
 
-        if (Y_toggle_state) {
-            // WALL MODE AAN (niet tijdens een sprong of flip, anders overschrijft hij die)
-            if (!motors_busy()) {
-                wall_mode(grounded, true, control.right_trigger, control.left_trigger);
-            }
+        // Centrale prioriteitsregeling voor swivel en motoren:
+        // 1. Jump/flip heeft altijd prioriteit.
+        // 2. Daarna wall-mode.
+        // 3. Anders normale besturing.
+        if (motors_busy()) {
+            servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_UP_US);
+            wallModeWasOn = Y_toggle_state;
+        }
+        else if (Y_toggle_state) {
+            wall_mode(grounded, true,
+                      control.right_trigger,
+                      control.left_trigger);
             wallModeWasOn = true;
-
-        } else {
-            // NORMALE BESTURING
+        }
+        else {
             if (wallModeWasOn) {
-                wall_mode(grounded, false, 0, 0);   // eenmalig terugzetten naar het midden
+                // Wall-mode is uitgezet: eenmalig alle bijbehorende servo's neutraliseren.
+                wall_mode(grounded, false, 0, 0);
                 wallModeWasOn = false;
             }
 
-            // Swivel elke 20 ms opnieuw bevestigen: omhoog tijdens sprong/flip, anders midden.
-            // Zo blijft hij nooit hangen als een overgang is gemist.
-            servo_set_pulse(SERVO_SWIVEL, motors_busy() ? SERVO_SWIVEL_UP_US : SERVO_SWIVEL_CENTER_US);
+            servo_set_pulse(SERVO_SWIVEL, SERVO_SWIVEL_CENTER_US);
 
-            // Gas en luchtbesturing alleen als er niet gesprongen of geflipt wordt
-            if (!motors_busy()) {
-                throttle_control(grounded, control.right_trigger, control.left_trigger, control.right_bumper);
-                air_control(grounded, control.left_bumper, control.right_bumper,
-                            control.x_axis, control.y_axis, control.x, control.b);
-            }
+            throttle_control(grounded,
+                             control.right_trigger,
+                             control.left_trigger,
+                             control.right_bumper);
+
+            air_control(grounded,
+                        control.left_bumper,
+                        control.right_bumper,
+                        control.x_axis,
+                        control.y_axis,
+                        control.x,
+                        control.b);
         }
     }
     delay(1);
